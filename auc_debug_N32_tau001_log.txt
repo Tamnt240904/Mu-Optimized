@@ -1,0 +1,24 @@
+[device] CPU
+Loading ResNet-50 and image...
+Found ./sample_imagenet1k (1000 images)
+  ✓ n01806567_quail.JPEG → class=85, conf=0.8058
+
+Model : ResNet-50 (ImageNet pretrained)
+Source: ./sample_imagenet1k/n01806567_quail.JPEG
+Class : 85 (conf=0.8058)
+f(x) = 8.4407,  f(bl) = -0.3065,  Δf = 8.7472
+N = 32,  τ = 0.01,  iters = 150,  lr = 0.05
+
+Method                Var_ν      CV²        𝒬        Obj     Time
+─────────────────────────────────────────────────────────────────
+IG                 0.098840  34.9857   0.0278    -0.0276     2.7s
+IDG-PDF            0.014060 276.6308   0.0036    -0.0009     2.6s
+μ-Optimized        0.001871   0.0005   0.9995    -0.9992     2.6s
+
+Method              Ins AUC    Del AUC    Ins-Del
+──────────────────────────────────────────────────
+IG                   0.9861     0.2164     0.7698
+IDG-PDF              0.9573     0.2110     0.7463
+μ-Optimized          0.9702     0.2245     0.7457
+
+Results → auc_debug_N32_tau001.json

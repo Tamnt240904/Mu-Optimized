@@ -1,0 +1,997 @@
+./codex_refactor.diff:79:-| IDGI | μ_k ∝ \|Δf_k\| | signal coverage (heuristic) |
+./codex_refactor.diff:91:-| IDGI | N + 1 | N | O(N) |
+./codex_refactor.diff:100:-IDGI            0.005221   0.0100   0.9901      0.1s
+./codex_refactor.diff:114:-# Basic run (all 3 methods: IG, IDGI, μ-Optimized)
+./codex_refactor.diff:123:-Not all steps matter equally. Steps with tiny |Δf_k| carry negligible attribution signal. The **effective measure** captures this:
+./codex_refactor.diff:171:-## Relationship to IDGI
+./codex_refactor.diff:173:-**IDGI** (Integrated Directional Gradients) uses the closed-form weights `μ_k ∝ |Δf_k|`. This is **not** a solution to our objective, which contains no signal-coverage term. The two approaches are complementary:
+./codex_refactor.diff:176:-- **IDGI**: assigns weight based on *how much the output changes* at each step (|Δf_k|). Closed-form heuristic, no optimization required. Targets signal coverage.
+./codex_refactor.diff:182:-In practice, μ-Optimized weights often resemble IDGI weights (both upweight transition-region steps), but for different reasons:
+./codex_refactor.diff:183:-- IDGI upweights where |Δf_k| is large (heuristic)
+./codex_refactor.diff:187:-**Combination:** You can initialize the optimizer with IDGI weights instead of uniform weights, often accelerating convergence.
+./codex_refactor.diff:196:-This is the same rescaling used by IDGI and other weighted IG variants.
+./codex_refactor.diff:205:-- Sikdar, S., Bhatt, P., and Heese, R. "Integrated Directional Gradients: Feature Interaction Attribution for Neural NLP Models." ACL 2021.
+./codex_refactor.diff:208:diff --git a/lam.py b/lam.py
+./codex_refactor.diff:210:--- a/lam.py
+./codex_refactor.diff:211:+++ b/lam.py
+./codex_refactor.diff:216:+lam.py — Integrated Gradients attribution methods and experiment utilities
+./codex_refactor.diff:238:-    IDGI         — μ heuristic       (straight line, μ_k ∝ |Δf_k|)
+./codex_refactor.diff:258:+    python lam.py                        # single run
+./codex_refactor.diff:259:+    python lam.py --viz --viz-fidelity   # with plots
+./codex_refactor.diff:260:+    python lam.py --json results.json    # export
+./codex_refactor.diff:286:-# §4  STRAIGHT-LINE PASS  (shared by IG, IDGI, μ-Optimised)
+./codex_refactor.diff:350:-# §6  IDGI
+./codex_refactor.diff:357:-    """IDGI (Sikdar et al., 2021).  μ_k ∝ |Δf_k| on straight line."""
+./codex_refactor.diff:368:-    return _pack_result("IDGI", attr, d_list, df_list, f_vals, gnorms, mu, N, t0)
+./codex_refactor.diff:372:-    """IDGI (Sikdar et al., 2021). Algorithm 1: I_i += g_i² * d / ‖g‖²."""
+./codex_refactor.diff:403:-    return _pack_result("IDGI", attr, d_list, df_list, f_vals, gnorms, mu, N, t0)
+./codex_refactor.diff:547:+    return torch.clamp(v - theta, min=0.0)
+./codex_refactor.diff:642:-    patch_imp = patch_sum / patch_cnt.clamp(min=1)
+./codex_refactor.diff:649:-    p2g = torch.clamp(rank // per_grp, max=G - 1)
+./codex_refactor.diff:659:-#     v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)
+./codex_refactor.diff:669:-    v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)
+./codex_refactor.diff:756:-      - V is clamped (≥ 0.01), not softmax-parameterised
+./codex_refactor.diff:794:-        V = torch.clamp(V, min=0.01)
+./codex_refactor.diff:970:-    colors = {"IG":"#6B7280","IDGI":"#8B5CF6","Guided IG":"#06B6D4",
+./codex_refactor.diff:1062:-Implements μ-optimization for Integrated Gradients with signal-harvesting objective:
+./codex_refactor.diff:1070:-    2. IDGI             — μ_k ∝ |Δf_k|, straight line
+./codex_refactor.diff:1071:-    3. μ-Optimized      — optimized μ via signal-harvesting objective
+./codex_refactor.diff:1086: from lam import (
+./codex_refactor.diff:1099:-def compute_signal_harvesting_objective(
+./codex_refactor.diff:1104:-    lam: float = 1.0,
+./codex_refactor.diff:1109:-    Evaluate the signal-harvesting objective:
+./codex_refactor.diff:1120:-        lam:     signal-harvesting strength λ
+./codex_refactor.diff:1124:-        (total_objective, var_nu_term, signal_term, l2_term)
+./codex_refactor.diff:1131:-    signal = float((mu * d.abs()).sum())
+./codex_refactor.diff:1139:-    total = var_nu - lam * signal + (tau / 2.0) * l2
+./codex_refactor.diff:1141:-    return total, var_nu, signal, l2
+./codex_refactor.diff:1145:-# §2  CLOSED-FORM μ* (KKT stationary point — IDGI)
+./codex_refactor.diff:1159:-    This is the exact stationary point of the signal-harvesting action
+./codex_refactor.diff:1165:-        mode:    "d" uses |d_k| (exact KKT), "df" uses |Δf_k| (IDGI)
+./codex_refactor.diff:1191:-def optimize_mu_signal_harvesting(
+./codex_refactor.diff:1195:-    lam: float = 1.0,
+./codex_refactor.diff:1201:-    Find μ minimising the signal-harvesting objective:
+./codex_refactor.diff:1212:-      - Only the linear form recovers IDGI exactly
+./codex_refactor.diff:1217:-        λ → ∞ :  μ* → |d_k| / Σ_j |d_j|         (IDGI)
+./codex_refactor.diff:1231:-    abs_d = d.abs().detach()          # |d_k| for signal-harvesting term
+./codex_refactor.diff:1261:-        signal_term = (mu * abs_d).sum()
+./codex_refactor.diff:1267:-        loss = var_phi - lam * signal_term + (tau / 2.0) * l2_term
+./codex_refactor.diff:1287:-    lam: float = 1.0,
+./codex_refactor.diff:1292:-    Straight line + optimal μ under the signal-harvesting objective.
+./codex_refactor.diff:1294:-    This combines the conservation-law objective (Var_ν) with signal
+./codex_refactor.diff:1295:-    harvesting (−λΣμ|d|) and L2 admissibility.
+./codex_refactor.diff:1301:-        lam=0 : pure conservation (original LAM μ-optimisation)
+./codex_refactor.diff:1302:-        lam→∞ : recovers IDGI (μ_k ∝ |d_k|)
+./codex_refactor.diff:1310:-    mu = optimize_mu_signal_harvesting(
+./codex_refactor.diff:1311:-        d_arr, df_arr, lam=lam, tau=tau, n_iter=n_iter)
+./codex_refactor.diff:1327:-# §5  RUN ALL METHODS (IG, IDGI, μ-Optimized only)
+./codex_refactor.diff:1336:-    lam: float = 1.0,
+./codex_refactor.diff:1341:-    Run three IG variants: IG, IDGI, and μ-Optimized*.
+./codex_refactor.diff:1344:-    Returns list: [IG, IDGI, μ-Optimized*]
+./codex_refactor.diff:1347:-    from lam import standard_ig, idgi
+./codex_refactor.diff:1348:+    from lam import standard_ig, idg_pdf
+./codex_refactor.diff:1355:-    # 2. IDGI  (μ_k ∝ |Δf_k|, straight line)
+./codex_refactor.diff:1360:-    # 3. μ-Optimized*  (straight line, signal-harvesting μ)
+./codex_refactor.diff:1363:-        model, x, baseline, N, lam=lam, tau=tau, n_iter=mu_iter))
+./codex_refactor.diff:1374:-def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./codex_refactor.diff:1375:-    """Run experiment: load model/image, run 3 methods (IG, IDGI, μ-Optimized), print table."""
+./codex_refactor.diff:1378:     from lam import load_image_and_model
+./codex_refactor.diff:1381:@@ -307,11 +227,10 @@ def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./codex_refactor.diff:1385:-    print(f"N = {N},  λ = {lam},  τ = {tau}\n")
+./codex_refactor.diff:1390:-        lam=lam, tau=tau)
+./codex_refactor.diff:1395:@@ -323,13 +242,12 @@ def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./codex_refactor.diff:1399:-        obj, _, _, _ = compute_signal_harvesting_objective(
+./codex_refactor.diff:1400:-            d_arr, df_arr, mu_arr, lam=lam, tau=tau)
+./codex_refactor.diff:1406:-        "config": {"N": N, "lam": lam, "tau": tau},
+./codex_refactor.diff:1411:@@ -339,7 +257,7 @@ def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./codex_refactor.diff:1424:-        description="μ-Optimized IG — compare IG, IDGI, and μ-Optimized")
+./codex_refactor.diff:1430:-    parser.add_argument("--lam", type=float, default=1.0,
+./codex_refactor.diff:1431:-                        help="Signal-harvesting strength λ (0 = original LAM)")
+./codex_refactor.diff:1439:-        lam=args.lam, tau=args.tau, skip=args.skip)
+./codex_refactor.diff:1460:-        get_scores = lambda m: m.region_insdel
+./codex_refactor.diff:1467:-        get_scores = lambda m: m.insdel
+./codex_refactor.diff:1477:-        "IDGI":        "#8B5CF6",
+./codex_refactor.diff:1489:-        "IG": "#6B7280", "IDGI": "#8B5CF6", "Guided IG": "#06B6D4",
+./codex_refactor.diff:1507:+    return float(q.clamp(0.0, 1.0))
+./codex_refactor.diff:1529:-        # No signal at all — can't assess fidelity
+./grep_check.txt:1:./codex_refactor.diff:79:-| IDGI | μ_k ∝ \|Δf_k\| | signal coverage (heuristic) |
+./grep_check.txt:2:./codex_refactor.diff:91:-| IDGI | N + 1 | N | O(N) |
+./grep_check.txt:3:./codex_refactor.diff:100:-IDGI            0.005221   0.0100   0.9901      0.1s
+./grep_check.txt:4:./codex_refactor.diff:114:-# Basic run (all 3 methods: IG, IDGI, μ-Optimized)
+./grep_check.txt:5:./codex_refactor.diff:123:-Not all steps matter equally. Steps with tiny |Δf_k| carry negligible attribution signal. The **effective measure** captures this:
+./grep_check.txt:6:./codex_refactor.diff:171:-## Relationship to IDGI
+./grep_check.txt:7:./codex_refactor.diff:173:-**IDGI** (Integrated Directional Gradients) uses the closed-form weights `μ_k ∝ |Δf_k|`. This is **not** a solution to our objective, which contains no signal-coverage term. The two approaches are complementary:
+./grep_check.txt:8:./codex_refactor.diff:176:-- **IDGI**: assigns weight based on *how much the output changes* at each step (|Δf_k|). Closed-form heuristic, no optimization required. Targets signal coverage.
+./grep_check.txt:9:./codex_refactor.diff:182:-In practice, μ-Optimized weights often resemble IDGI weights (both upweight transition-region steps), but for different reasons:
+./grep_check.txt:10:./codex_refactor.diff:183:-- IDGI upweights where |Δf_k| is large (heuristic)
+./grep_check.txt:11:./codex_refactor.diff:187:-**Combination:** You can initialize the optimizer with IDGI weights instead of uniform weights, often accelerating convergence.
+./grep_check.txt:12:./codex_refactor.diff:196:-This is the same rescaling used by IDGI and other weighted IG variants.
+./grep_check.txt:13:./codex_refactor.diff:205:-- Sikdar, S., Bhatt, P., and Heese, R. "Integrated Directional Gradients: Feature Interaction Attribution for Neural NLP Models." ACL 2021.
+./grep_check.txt:14:./codex_refactor.diff:208:diff --git a/lam.py b/lam.py
+./grep_check.txt:15:./codex_refactor.diff:210:--- a/lam.py
+./grep_check.txt:16:./codex_refactor.diff:211:+++ b/lam.py
+./grep_check.txt:17:./codex_refactor.diff:216:+lam.py — Integrated Gradients attribution methods and experiment utilities
+./grep_check.txt:18:./codex_refactor.diff:238:-    IDGI         — μ heuristic       (straight line, μ_k ∝ |Δf_k|)
+./grep_check.txt:19:./codex_refactor.diff:258:+    python lam.py                        # single run
+./grep_check.txt:20:./codex_refactor.diff:259:+    python lam.py --viz --viz-fidelity   # with plots
+./grep_check.txt:21:./codex_refactor.diff:260:+    python lam.py --json results.json    # export
+./grep_check.txt:22:./codex_refactor.diff:286:-# §4  STRAIGHT-LINE PASS  (shared by IG, IDGI, μ-Optimised)
+./grep_check.txt:23:./codex_refactor.diff:350:-# §6  IDGI
+./grep_check.txt:24:./codex_refactor.diff:357:-    """IDGI (Sikdar et al., 2021).  μ_k ∝ |Δf_k| on straight line."""
+./grep_check.txt:25:./codex_refactor.diff:368:-    return _pack_result("IDGI", attr, d_list, df_list, f_vals, gnorms, mu, N, t0)
+./grep_check.txt:26:./codex_refactor.diff:372:-    """IDGI (Sikdar et al., 2021). Algorithm 1: I_i += g_i² * d / ‖g‖²."""
+./grep_check.txt:27:./codex_refactor.diff:403:-    return _pack_result("IDGI", attr, d_list, df_list, f_vals, gnorms, mu, N, t0)
+./grep_check.txt:28:./codex_refactor.diff:547:+    return torch.clamp(v - theta, min=0.0)
+./grep_check.txt:29:./codex_refactor.diff:642:-    patch_imp = patch_sum / patch_cnt.clamp(min=1)
+./grep_check.txt:30:./codex_refactor.diff:649:-    p2g = torch.clamp(rank // per_grp, max=G - 1)
+./grep_check.txt:31:./codex_refactor.diff:659:-#     v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)
+./grep_check.txt:32:./codex_refactor.diff:669:-    v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)
+./grep_check.txt:33:./codex_refactor.diff:756:-      - V is clamped (≥ 0.01), not softmax-parameterised
+./grep_check.txt:34:./codex_refactor.diff:794:-        V = torch.clamp(V, min=0.01)
+./grep_check.txt:35:./codex_refactor.diff:970:-    colors = {"IG":"#6B7280","IDGI":"#8B5CF6","Guided IG":"#06B6D4",
+./grep_check.txt:36:./codex_refactor.diff:1062:-Implements μ-optimization for Integrated Gradients with signal-harvesting objective:
+./grep_check.txt:37:./codex_refactor.diff:1070:-    2. IDGI             — μ_k ∝ |Δf_k|, straight line
+./grep_check.txt:38:./codex_refactor.diff:1071:-    3. μ-Optimized      — optimized μ via signal-harvesting objective
+./grep_check.txt:39:./codex_refactor.diff:1086: from lam import (
+./grep_check.txt:40:./codex_refactor.diff:1099:-def compute_signal_harvesting_objective(
+./grep_check.txt:41:./codex_refactor.diff:1104:-    lam: float = 1.0,
+./grep_check.txt:42:./codex_refactor.diff:1109:-    Evaluate the signal-harvesting objective:
+./grep_check.txt:43:./codex_refactor.diff:1120:-        lam:     signal-harvesting strength λ
+./grep_check.txt:44:./codex_refactor.diff:1124:-        (total_objective, var_nu_term, signal_term, l2_term)
+./grep_check.txt:45:./codex_refactor.diff:1131:-    signal = float((mu * d.abs()).sum())
+./grep_check.txt:46:./codex_refactor.diff:1139:-    total = var_nu - lam * signal + (tau / 2.0) * l2
+./grep_check.txt:47:./codex_refactor.diff:1141:-    return total, var_nu, signal, l2
+./grep_check.txt:48:./codex_refactor.diff:1145:-# §2  CLOSED-FORM μ* (KKT stationary point — IDGI)
+./grep_check.txt:49:./codex_refactor.diff:1159:-    This is the exact stationary point of the signal-harvesting action
+./grep_check.txt:50:./codex_refactor.diff:1165:-        mode:    "d" uses |d_k| (exact KKT), "df" uses |Δf_k| (IDGI)
+./grep_check.txt:51:./codex_refactor.diff:1191:-def optimize_mu_signal_harvesting(
+./grep_check.txt:52:./codex_refactor.diff:1195:-    lam: float = 1.0,
+./grep_check.txt:53:./codex_refactor.diff:1201:-    Find μ minimising the signal-harvesting objective:
+./grep_check.txt:54:./codex_refactor.diff:1212:-      - Only the linear form recovers IDGI exactly
+./grep_check.txt:55:./codex_refactor.diff:1217:-        λ → ∞ :  μ* → |d_k| / Σ_j |d_j|         (IDGI)
+./grep_check.txt:56:./codex_refactor.diff:1231:-    abs_d = d.abs().detach()          # |d_k| for signal-harvesting term
+./grep_check.txt:57:./codex_refactor.diff:1261:-        signal_term = (mu * abs_d).sum()
+./grep_check.txt:58:./codex_refactor.diff:1267:-        loss = var_phi - lam * signal_term + (tau / 2.0) * l2_term
+./grep_check.txt:59:./codex_refactor.diff:1287:-    lam: float = 1.0,
+./grep_check.txt:60:./codex_refactor.diff:1292:-    Straight line + optimal μ under the signal-harvesting objective.
+./grep_check.txt:61:./codex_refactor.diff:1294:-    This combines the conservation-law objective (Var_ν) with signal
+./grep_check.txt:62:./codex_refactor.diff:1295:-    harvesting (−λΣμ|d|) and L2 admissibility.
+./grep_check.txt:63:./codex_refactor.diff:1301:-        lam=0 : pure conservation (original LAM μ-optimisation)
+./grep_check.txt:64:./codex_refactor.diff:1302:-        lam→∞ : recovers IDGI (μ_k ∝ |d_k|)
+./grep_check.txt:65:./codex_refactor.diff:1310:-    mu = optimize_mu_signal_harvesting(
+./grep_check.txt:66:./codex_refactor.diff:1311:-        d_arr, df_arr, lam=lam, tau=tau, n_iter=n_iter)
+./grep_check.txt:67:./codex_refactor.diff:1327:-# §5  RUN ALL METHODS (IG, IDGI, μ-Optimized only)
+./grep_check.txt:68:./codex_refactor.diff:1336:-    lam: float = 1.0,
+./grep_check.txt:69:./codex_refactor.diff:1341:-    Run three IG variants: IG, IDGI, and μ-Optimized*.
+./grep_check.txt:70:./codex_refactor.diff:1344:-    Returns list: [IG, IDGI, μ-Optimized*]
+./grep_check.txt:71:./codex_refactor.diff:1347:-    from lam import standard_ig, idgi
+./grep_check.txt:72:./codex_refactor.diff:1348:+    from lam import standard_ig, idg_pdf
+./grep_check.txt:73:./codex_refactor.diff:1355:-    # 2. IDGI  (μ_k ∝ |Δf_k|, straight line)
+./grep_check.txt:74:./codex_refactor.diff:1360:-    # 3. μ-Optimized*  (straight line, signal-harvesting μ)
+./grep_check.txt:75:./codex_refactor.diff:1363:-        model, x, baseline, N, lam=lam, tau=tau, n_iter=mu_iter))
+./grep_check.txt:76:./codex_refactor.diff:1374:-def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./grep_check.txt:77:./codex_refactor.diff:1375:-    """Run experiment: load model/image, run 3 methods (IG, IDGI, μ-Optimized), print table."""
+./grep_check.txt:78:./codex_refactor.diff:1378:     from lam import load_image_and_model
+./grep_check.txt:79:./codex_refactor.diff:1381:@@ -307,11 +227,10 @@ def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./grep_check.txt:80:./codex_refactor.diff:1385:-    print(f"N = {N},  λ = {lam},  τ = {tau}\n")
+./grep_check.txt:81:./codex_refactor.diff:1390:-        lam=lam, tau=tau)
+./grep_check.txt:82:./codex_refactor.diff:1395:@@ -323,13 +242,12 @@ def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./grep_check.txt:83:./codex_refactor.diff:1399:-        obj, _, _, _ = compute_signal_harvesting_objective(
+./grep_check.txt:84:./codex_refactor.diff:1400:-            d_arr, df_arr, mu_arr, lam=lam, tau=tau)
+./grep_check.txt:85:./codex_refactor.diff:1406:-        "config": {"N": N, "lam": lam, "tau": tau},
+./grep_check.txt:86:./codex_refactor.diff:1411:@@ -339,7 +257,7 @@ def run_experiment(N=50, device=None, min_conf=0.70, lam=1.0, tau=0.01, skip=0):
+./grep_check.txt:87:./codex_refactor.diff:1424:-        description="μ-Optimized IG — compare IG, IDGI, and μ-Optimized")
+./grep_check.txt:88:./codex_refactor.diff:1430:-    parser.add_argument("--lam", type=float, default=1.0,
+./grep_check.txt:89:./codex_refactor.diff:1431:-                        help="Signal-harvesting strength λ (0 = original LAM)")
+./grep_check.txt:90:./codex_refactor.diff:1439:-        lam=args.lam, tau=args.tau, skip=args.skip)
+./grep_check.txt:91:./codex_refactor.diff:1460:-        get_scores = lambda m: m.region_insdel
+./grep_check.txt:92:./codex_refactor.diff:1467:-        get_scores = lambda m: m.insdel
+./grep_check.txt:93:./codex_refactor.diff:1477:-        "IDGI":        "#8B
+./lam.py:2:lam.py — Integrated Gradients attribution methods and experiment utilities
+./lam.py:17:    python lam.py                        # single run
+./lam.py:18:    python lam.py --viz --viz-fidelity   # with plots
+./lam.py:19:    python lam.py --json results.json    # export
+./lam.py:329:            q_val = (P ** 2 / (D * Fv)).clamp(0.0, 1.0)
+./lam.py:381:    return torch.clamp(v - theta, min=0.0)
+./lam.py:503:        raw = (torch.randn(1,3,224,224, device=device)*0.2+0.5).clamp(0,1)
+./lam.py:544:    img = ((x*std+mean).clamp(0,1)[0].permute(1,2,0).cpu().numpy()*255).astype("uint8")
+./misc/OOM_FIX_GUIDE.md:22:from signal_lam_batched import joint_star_ig_batched
+./misc/OOM_FIX_GUIDE.md:62:    lam=1.0, tau=0.01,
+./misc/OOM_FIX_GUIDE.md:68:# - Speedup: ~4-5× faster than signal_lam.joint_star_ig
+./misc/OOM_FIX_GUIDE.md:139:from signal_lam_batched import joint_star_ig_batched
+./misc/OOM_FIX_GUIDE.md:157:from signal_lam import joint_star_ig
+./misc/OOM_FIX_GUIDE.md:158:from signal_lam_batched import joint_star_ig_batched
+./misc/OOM_FIX_GUIDE.md:215:| **Original (signal_lam.py)** | 1.2 GB | 60s | 1× (baseline) |
+./misc/OOM_FIX_GUIDE.md:279:from signal_lam import joint_star_ig
+./misc/OOM_FIX_GUIDE.md:280:from signal_lam_batched import joint_star_ig_batched
+./misc/OOM_FIX_GUIDE.md:306:                                n_alternating=2, lam=1.0, tau=0.01)
+./misc/OOM_FIX_GUIDE.md:317:        n_alternating=2, lam=1.0, tau=0.01,
+./misc/OOM_FIX_GUIDE.md:352:    lam=1.0, tau=0.01,
+./misc/OOM_FIX_GUIDE.md:374:- ✅ `signal_lam_batched.py`: Added `chunk_size` parameter
+./misc/debug_chunking.py:5:from signal_lam import joint_star_ig
+./misc/debug_chunking.py:6:from signal_lam_batched import joint_star_ig_batched
+./misc/debug_chunking.py:7:from lam import load_image_and_model
+./misc/eng.py:20:  - IDGI: reweights by |Δf| ≈ proxy for Δh, partially aligns p with q
+./misc/eng.py:93:# 3. IDGI
+./misc/eng.py:114:    w_sum = w_stack.sum(0, keepdim=True).clamp(min=1e-8)
+./misc/eng.py:122:    g_norm = g_flat.norm(dim=2, keepdim=True).clamp(min=1e-10)
+./misc/eng.py:128:    d_sum = weighted.sum(dim=1, keepdim=True).clamp(min=1e-10)
+./misc/eng.py:185:    clamp_lo: float = 0.1
+./misc/eng.py:186:    clamp_hi: float = 10.0
+./misc/eng.py:268:            scale = max(cfg.clamp_lo, min(cfg.clamp_hi, scale))
+./misc/eng.py:283:        # Clamp ratio to prevent explosion on near-zero dimensions
+./misc/eng.py:284:        ratio = ratio.clamp(-10, 10)
+./misc/eng.py:604:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/eng.py:615:        "IG": "#D85A30", "IDGI": "#7F77DD",
+./misc/eng.py:644:    # 2. IDGI
+./misc/eng.py:647:    print("2. IDGI")
+./misc/eng.py:655:    # IDGI uses same path as IG, same entropy profile
+./misc/eng.py:691:        cfg=EAConfig(n_iters=10, clamp_lo=0.1, clamp_hi=10.0, momentum=0.5),
+./misc/eng.py:709:    print(f"{'':22} {'IG':>8} {'IDGI':>8} {'GuidedIG':>10} {'EA-IG':>8}")
+./misc/eng.py:722:    attrs = {"IG": attr_ig, "IDGI": attr_idgi, "Guided IG": attr_gig, "EA-IG": attr_ea}
+./misc/eng.py:726:            "IG": abs(ig_sum - delta_f), "IDGI": abs(idgi_sum - delta_f),
+./misc/eng.py:737:                ("IDGI", idgi_logits, colors["IDGI"]),
+./misc/eng.py:743:                ("IDGI", dens_idgi, colors["IDGI"]),
+./misc/fbv1.py:19:Comparison: vanilla IG, IDGI, Guided IG, Free Boundary IG.
+./misc/fbv1.py:85:# 3. IDGI
+./misc/fbv1.py:90:    IDGI: normalize gradients to unit vectors, weight by |Δlogit|,
+./misc/fbv1.py:112:    w_sum = w_stack.sum(0, keepdim=True).clamp(min=1e-8)
+./misc/fbv1.py:122:    g_norm = g_flat.norm(dim=2, keepdim=True).clamp(min=1e-10)
+./misc/fbv1.py:130:    d_sum = weighted.sum(dim=1, keepdim=True).clamp(min=1e-10)
+./misc/fbv1.py:151:    High-gradient dims take smaller steps (arrive late → clean signal).
+./misc/fbv1.py:153:    Key: clamp inverse weights to prevent explosion near baseline
+./misc/fbv1.py:171:        # Clamp: don't let weight exceed 10× the median
+./misc/fbv1.py:173:        median_g = grad_abs.median(dim=1, keepdim=True).values.clamp(min=1e-8)
+./misc/fbv1.py:177:        inv_weight = inv_weight / inv_weight.mean(dim=1, keepdim=True).clamp(min=1e-10)
+./misc/fbv1.py:183:        # Safety: clamp step to not exceed remaining (no overshoot)
+./misc/fbv1.py:184:        step_flat = step_flat.clamp(min=rem_flat.clamp(max=0), max=rem_flat.clamp(min=0))
+./misc/fbv1.py:265:        sorted_idx = sorted(range(N), key=lambda i: abs_dens[i], reverse=True)
+./misc/fbv1.py:290:            g_norm_sq = (g_flat ** 2).sum(1, keepdim=True).clamp(min=1e-12)
+./misc/fbv1.py:598:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/fbv1.py:609:        "IG": "#D85A30", "IDGI": "#7F77DD",
+./misc/fbv1.py:628:    # 2. IDGI
+./misc/fbv1.py:631:    print("2. IDGI")
+./misc/fbv1.py:677:    print(f"{'':22} {'IG':>8} {'IDGI':>8} {'GuidedIG':>10} {'FB-IG':>8}")
+./misc/fbv1.py:689:    attrs = {"IG": attr_ig, "IDGI": attr_idgi, "Guided IG": attr_gig, "FB-IG": attr_fb}
+./misc/fbv1.py:693:            "IG": abs(ig_sum - delta_f), "IDGI": abs(idgi_sum - delta_f),
+./misc/fbv1.py:704:                ("IDGI", idgi_logits, colors["IDGI"]),
+./misc/fbv1.py:710:                ("IDGI", dens_idgi, colors["IDGI"]),
+./misc/fbv1.py:719:            ("IDGI", dens_idgi, colors["IDGI"]),
+./misc/j2.py:6:showing that IG, IDGI, and Guided IG all optimise the same objective:
+./misc/j2.py:22:    │ IDGI        │ fixed    │ heur.  │ straight line, μ_k ∝ |Δf_k|  │
+./misc/j2.py:40:    Sikdar et al., "Integrated Directional Gradients" (ACL 2021)
+./misc/j2.py:375:# §8  IDGI
+./misc/j2.py:381:    Integrated Directional Gradients (Sikdar et al., 2021).
+./misc/j2.py:415:    # IDGI weighting: μ_k ∝ |Δf_k|
+./misc/j2.py:436:        name="IDGI", attributions=attr,
+./misc/j2.py:745:        V = torch.clamp(V, min=0.01)
+./misc/j2.py:931:        names = ["IG", "IDGI", "Guided IG", "μ-Optimized", "Joint"]
+./misc/j2.py:966:            ("Mean 𝒬", lambda v: sum(v) / len(v)),
+./misc/j2.py:967:            ("Std 𝒬", lambda v: (sum((z - sum(v)/len(v))**2
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:4:**Target:** `joint_star_ig()` and `optimize_path_signal_harvesting()`
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:39:# In optimize_path_signal_harvesting (lines 379-395)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:66:def optimize_path_signal_harvesting_batched(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:76:    lam: float = 1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:95:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:113:            obj = _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:151:        V = torch.clamp(V, min=0.01)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:171:    from lam import _build_path_2d
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:236:def optimize_path_signal_harvesting_full_fd(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:238:    n_iter=15, lr=0.08, lam=1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:255:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:275:        V = torch.clamp(V, min=0.01)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:291:def optimize_path_signal_harvesting_sparse(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:293:    n_iter=15, lr=0.08, lam=1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:311:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:339:        V = torch.clamp(V, min=0.01)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:352:def optimize_path_signal_harvesting_spsa(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:354:    n_iter=15, lr=0.08, lam=1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:375:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:390:        V_plus = torch.clamp(V_plus, min=0.01)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:391:        V_minus = torch.clamp(V_minus, min=0.01)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:400:        V = torch.clamp(V, min=0.01)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:448:    n_alternating=2, lam=1.0, tau=0.01,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:474:        mu = optimize_mu_signal_harvesting(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:475:            d_arr, df_arr, lam=lam, tau=tau, n_iter=mu_iter)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:478:        obj, _, _, _ = compute_signal_harvesting_objective(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:479:            d_arr, df_arr, mu, lam=lam, tau=tau)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:490:            gamma_pts = optimize_path_signal_harvesting(
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:492:                patch_size=14, n_iter=path_iter, lr=0.08, lam=lam)
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:511:    lam=1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:528:    lam=1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:546:    lam=1.0,
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:581:Implement `optimize_path_signal_harvesting_spsa()` - 50 lines of code
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:596:signal_lam.py:
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:597:  Line 338-398: optimize_path_signal_harvesting()  ← PRIMARY TARGET
+./misc/JOINT_STAR_OPTIMIZATION_GUIDE.md:600:lam.py:
+./misc/JoinX.py:6:showing that IG, IDGI, and Guided IG all optimise the same objective:
+./misc/JoinX.py:22:    │ IDGI        │ fixed    │ heur.  │ straight line, μ_k ∝ |Δf_k|  │
+./misc/JoinX.py:40:    Sikdar et al., "Integrated Directional Gradients" (ACL 2021)
+./misc/JoinX.py:334:# §8  IDGI
+./misc/JoinX.py:340:    Integrated Directional Gradients (Sikdar et al., 2021).
+./misc/JoinX.py:368:    # IDGI weighting: μ_k ∝ |Δf_k|
+./misc/JoinX.py:390:        name="IDGI", attributions=attr,
+./misc/JoinX.py:686:        V = torch.clamp(V, min=0.01)
+./misc/JoinX.py:861:        names = ["IG", "IDGI", "Guided IG", "μ-Optimized", "Joint"]
+./misc/JoinX.py:892:        for label, fn in [("Mean 𝒬", lambda v: sum(v) / len(v)),
+./misc/JoinX.py:893:                           ("Std 𝒬", lambda v: (sum((x - sum(v)/len(v))**2 for x in v)/len(v))**0.5),
+./misc/lam.py:20:    IDGI         — μ heuristic       (straight line, μ_k ∝ |Δf_k|)
+./misc/lam.py:191:# §4  STRAIGHT-LINE PASS  (shared by IG, IDGI, μ-Optimised)
+./misc/lam.py:288:# §6  IDGI
+./misc/lam.py:293:    """IDGI (Sikdar et al., 2021).  μ_k ∝ |Δf_k| on straight line."""
+./misc/lam.py:309:    return _pack_result("IDGI", attr, d_list, df_list, f_vals, gnorms, mu, N, t0)
+./misc/lam.py:515:    v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)
+./misc/lam.py:602:      - V is clamped (≥ 0.01), not softmax-parameterised
+./misc/lam.py:640:        V = torch.clamp(V, min=0.01)
+./misc/lam.py:847:        raw = (torch.randn(1,3,224,224, device=device)*0.2+0.5).clamp(0,1)
+./misc/lam.py:876:    img = ((x*std+mean).clamp(0,1)[0].permute(1,2,0).cpu().numpy()*255).astype("uint8")
+./misc/lam.py:882:    colors = {"IG":"#6B7280","IDGI":"#8B5CF6","Guided IG":"#06B6D4",
+./misc/lamp.py:2:lamp.py — LAMP: Least Action Movement with Per-step completeness
+./misc/lamp.py:30:    optimize_mu_lamp(d, delta_f, tau, n_iter, lr)  — μ-phase with MSE_ν
+./misc/lamp.py:31:    lamp(model, x, baseline, N, ...)               — full LAMP attribution
+./misc/lamp.py:35:    from lamp import lamp
+./misc/lamp.py:36:    result = lamp(model, x, baseline, N=50)
+./misc/lamp.py:52:from lam import (
+./misc/lamp.py:126:def optimize_mu_lamp(d: torch.Tensor, delta_f: torch.Tensor,
+./misc/lamp.py:135:        lamp        →  minimises MSE_ν(φ,1) = Var_ν(φ) + (φ̄_ν − 1)²
+./misc/lamp.py:193:def _compute_path_obj_lamp(d_v: torch.Tensor, df_v: torch.Tensor,
+./misc/lamp.py:208:def optimize_path_lamp(model: nn.Module, x: torch.Tensor,
+./misc/lamp.py:216:    _compute_path_obj_lamp (MSE_ν) instead of compute_CV2.
+./misc/lamp.py:237:        return _compute_path_obj_lamp(d_v, df_v, mu)
+./misc/lamp.py:256:        V = torch.clamp(V, min=0.01)
+./misc/lamp.py:265:def lamp(model: nn.Module, x: torch.Tensor, baseline: torch.Tensor,
+./misc/lamp.py:372:        mu = optimize_mu_lamp(d_arr, df_arr, tau=tau, n_iter=mu_iter)
+./misc/lamp.py:389:            new_gamma_pts = optimize_path_lamp(
+./misc/lamp.py:447:def mu_lamp(model: nn.Module, x: torch.Tensor, baseline: torch.Tensor,
+./misc/lamp.py:455:        mu_lamp          →  straight line + MSE_ν(φ,1)-optimal μ
+./misc/lamp.py:458:    from the effect of path optimisation. If mu_lamp > mu_optimized_ig
+./misc/lamp.py:460:    If mu_lamp ≈ mu_optimized_ig, the path is the bottleneck.
+./misc/lamp.py:473:    mu = optimize_mu_lamp(d_arr, df_arr, tau=tau, n_iter=n_iter)
+./misc/lam_opt.py:2:lam_opt.py — Optimised Signal-Harvesting Action for Integrated Gradients
+./misc/lam_opt.py:5:Drop-in replacement for signal_harvesting.py with the following speedups:
+./misc/lam_opt.py:7:  1. Closed-form warm start for μ-optimisation (IDGI stationary point)
+./misc/lam_opt.py:23:    from lam_opt import (
+./misc/lam_opt.py:24:        optimize_mu_signal_harvesting,
+./misc/lam_opt.py:28:        compute_signal_harvesting_objective,
+./misc/lam_opt.py:50:from lam import (
+./misc/lam_opt.py:93:    return torch.clamp(v - theta, min=0.0)
+./misc/lam_opt.py:147:def compute_signal_harvesting_objective(
+./misc/lam_opt.py:151:    lam: float = 1.0,
+./misc/lam_opt.py:155:    Evaluate the full signal-harvesting objective (Eq. 20):
+./misc/lam_opt.py:160:        (total_objective, var_nu_term, signal_term, l2_term)
+./misc/lam_opt.py:163:    signal = float((mu * d.abs()).sum())
+./misc/lam_opt.py:165:    total = var_nu - lam * signal + (tau / 2.0) * l2
+./misc/lam_opt.py:166:    return total, var_nu, signal, l2
+./misc/lam_opt.py:185:        mode:    "d" uses |d_k| (exact KKT), "df" uses |Δf_k| (IDGI)
+./misc/lam_opt.py:206:#     Improvements over signal_harvesting.py:
+./misc/lam_opt.py:207:#       (a) Closed-form warm start: logits initialised from μ*_IDGI
+./misc/lam_opt.py:213:def optimize_mu_signal_harvesting(
+./misc/lam_opt.py:216:    lam: float = 1.0,
+./misc/lam_opt.py:225:    Find μ minimising the signal-harvesting objective (Eq. 24).
+./misc/lam_opt.py:228:      1. Warm start from closed-form IDGI solution (μ*_k ∝ |d_k|)
+./misc/lam_opt.py:252:            phi, df2, abs_d, lam, tau, n_iter, lr, tol, patience, device, N)
+./misc/lam_opt.py:255:            phi, df2, abs_d, lam, tau, n_iter, lr, tol, patience, device, N)
+./misc/lam_opt.py:263:    lam: float,
+./misc/lam_opt.py:276:    terms for signal and L2.
+./misc/lam_opt.py:292:    grad_signal = -lam * abs_d
+./misc/lam_opt.py:295:    obj = float(var_phi) - lam * float((mu.detach() * abs_d).sum()) \
+./misc/lam_opt.py:298:    grad_total = grad_var + grad_signal + grad_l2
+./misc/lam_opt.py:303:    phi, df2, abs_d, lam, tau, n_iter, lr, tol, patience, device, N,
+./misc/lam_opt.py:313:    # ── Warm start: closed-form IDGI solution ──
+./misc/lam_opt.py:333:            mu_look, phi, df2, abs_d, lam, tau)
+./misc/lam_opt.py:359:    phi, df2, abs_d, lam, tau, n_iter, lr, tol, patience, device, N,
+./misc/lam_opt.py:374:        logits = torch.log(mu_init.clamp(min=1e-10)).detach().requires_grad_(True)
+./misc/lam_opt.py:392:        signal_term = (mu * abs_d).sum()
+./misc/lam_opt.py:394:        loss = var_phi - lam * signal_term + (tau / 2.0) * l2_term
+./misc/lam_opt.py:442:    lam: float = 1.0,
+./misc/lam_opt.py:449:    Straight line + optimal μ under the signal-harvesting objective.
+./misc/lam_opt.py:465:    mu = optimize_mu_signal_harvesting(
+./misc/lam_opt.py:466:        d_arr, df_arr, lam=lam, tau=tau, n_iter=n_iter, method=mu_method)
+./misc/lam_opt.py:482:def _signal_harvesting_path_obj(
+./misc/lam_opt.py:486:    lam: float = 1.0,
+./misc/lam_opt.py:502:    signal = float((mu * d_v.abs()).sum())
+./misc/lam_opt.py:503:    return mse - lam * signal
+./misc/lam_opt.py:569:def optimize_path_signal_harvesting(
+./misc/lam_opt.py:579:    lam: float = 1.0,
+./misc/lam_opt.py:619:        obj = _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/lam_opt.py:706:            obj_pert = _signal_harvesting_path_obj(d_v_approx, df_v, mu, lam=lam)
+./misc/lam_opt.py:711:        V = torch.clamp(V, min=0.01)
+./misc/lam_opt.py:741:    lam: float = 1.0,
+./misc/lam_opt.py:750:    Joint* — the complete signal-harvesting solution (Table 1, last row).
+./misc/lam_opt.py:753:      1. Warm-started μ from closed-form IDGI (cuts μ-iters by ~3-6×)
+./misc/lam_opt.py:801:        mu = optimize_mu_signal_harvesting(
+./misc/lam_opt.py:802:            d_arr, df_arr, lam=lam, tau=tau, n_iter=mu_iter,
+./misc/lam_opt.py:806:        obj_mu, _, _, _ = compute_signal_harvesting_objective(
+./misc/lam_opt.py:807:            d_arr, df_arr, mu, lam=lam, tau=tau)
+./misc/lam_opt.py:822:            result = optimize_path_signal_harvesting(
+./misc/lam_opt.py:825:                lam=lam, use_amp=use_amp, return_diagnostics=True)
+./misc/lam_opt.py:831:            obj_new, _, _, _ = compute_signal_harvesting_objective(
+./misc/lam_opt.py:832:                new_d_arr, new_df_arr, mu, lam=lam, tau=tau)
+./misc/lam_opt.py:887:    lam: float = 1.0,
+./misc/lam_opt.py:901:    Returns list: [IG, IDGI, Guided IG, μ-Optimized*, Joint*]
+./misc/lam_opt.py:903:    from lam import standard_ig, idgi, guided_ig, joint_ig
+./misc/lam_opt.py:910:    # 2. IDGI
+./misc/lam_opt.py:919:        model, x, baseline, N, lam=lam, tau=tau, n_iter=mu_iter,
+./misc/lam_opt.py:926:        n_alternating=n_alternating, lam=lam, tau=tau,
+./misc/lam_opt.py:939:                   lam=1.0, tau=0.01, mu_method="projected", use_amp=True):
+./misc/lam_opt.py:941:    from lam import load_image_and_model
+./misc/lam_opt.py:958:    print(f"N = {N},  λ = {lam},  τ = {tau}")
+./misc/lam_opt.py:963:        lam=lam, tau=tau,
+./misc/lam_opt.py:978:        obj, _, _, _ = compute_signal_harvesting_objective(
+./misc/lam_opt.py:979:            d_arr, df_arr, mu_arr, lam=lam, tau=tau)
+./misc/lam_opt.py:984:        "config": {"N": N, "lam": lam, "tau": tau,
+./misc/lam_opt.py:995:# §10  MAIN — same CLI interface as signal_harvesting.py
+./misc/lam_opt.py:1009:    parser.add_argument("--lam", type=float, default=1.0,
+./misc/lam_opt.py:1010:                        help="Signal-harvesting strength λ")
+./misc/lam_opt.py:1053:    from lam import visualize_attributions
+./misc/lam_opt.py:1060:        guided_init=args.guided_init, lam=args.lam, tau=args.tau,
+./misc/nf3.py:196:    mg_n = mg_f.norm(dim=2, keepdim=True).clamp(min=1e-8)
+./misc/nf3.py:212:    vs_n = vs_f.norm(dim=2, keepdim=True).clamp(min=1e-8)
+./misc/nf3.py:535:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/nfv4.py:523:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/nfv5.py:538:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/nfv51.py:559:        x = ((torch.randn(1, 3, 224, 224, device=device) * .2 + .5).clamp(0, 1) - m) / s
+./misc/nfv52.py:154:# 4. IDGI (Importance-Driven Gradients Integration)
+./misc/nfv52.py:159:    IDGI: Integrated Gradients with importance-based weighting.
+./misc/nfv52.py:161:    From: "IDGI: A Framework to Eliminate Explanation Noise from
+./misc/nfv52.py:199:    w_sum = weights_stack.sum(dim=0, keepdim=True).clamp(min=1e-8)
+./misc/nfv52.py:473:    axes[2].set_title("IDGI");
+./misc/nfv52.py:486:        f"IDGI:{info['idgi_compl']:.2f}  "
+./misc/nfv52.py:641:        x = ((torch.randn(1, 3, 224, 224, device=device) * .2 + .5).clamp(0, 1) - m) / s
+./misc/nfv52.py:671:    # 2. IDGI
+./misc/nfv52.py:674:    print("2. IDGI (Importance-Driven Gradients Integration)")
+./misc/nfv52.py:733:    print(f"{'':20} {'IG':>10} {'IDGI':>10} {'Guided IG':>12} {'NF-IG':>10}")
+./misc/nfv52.py:766:                ("IDGI", idgi_logits, "#7F77DD"),
+./misc/nfv52.py:772:                ("IDGI", dens_idgi, "#7F77DD"),
+./misc/nfv52.py:782:            ("IDGI", idgi_path, "#7F77DD"),
+./misc/nfv53.py:153:# 4. IDGI (Importance-Driven Gradients Integration)
+./misc/nfv53.py:158:    IDGI: Integrated Gradients with importance-based weighting.
+./misc/nfv53.py:160:    From: "IDGI: A Framework to Eliminate Explanation Noise from
+./misc/nfv53.py:198:    w_sum = weights_stack.sum(dim=0, keepdim=True).clamp(min=1e-8)
+./misc/nfv53.py:468:    axes[2].set_title("IDGI"); axes[2].axis("off")
+./misc/nfv53.py:478:        f"IDGI:{info['idgi_compl']:.2f}  "
+./misc/nfv53.py:662:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/nfv53.py:690:    # 2. IDGI
+./misc/nfv53.py:693:    print("2. IDGI (Importance-Driven Gradients Integration)")
+./misc/nfv53.py:752:    print(f"{'':20} {'IG':>10} {'IDGI':>10} {'Guided IG':>12} {'NF-IG':>10}")
+./misc/nfv53.py:783:                ("IDGI", idgi_logits, "#7F77DD"),
+./misc/nfv53.py:789:                ("IDGI", dens_idgi, "#7F77DD"),
+./misc/nfv53.py:799:            ("IDGI", idgi_path, "#7F77DD"),
+./misc/nfvc6.py:98:    identifiable high-gradient features — not a mix of signal and noise.
+./misc/nfvc6.py:148:# 4. IDGI (Importance-Driven Gradients Integration)
+./misc/nfvc6.py:153:    IDGI: Importance-Driven Gradients Integration.
+./misc/nfvc6.py:155:    From: "IDGI: A Framework to Eliminate Explanation Noise from
+./misc/nfvc6.py:197:    w_sum = weights_stack.sum(dim=0, keepdim=True).clamp(min=1e-8)  # (1, B)
+./misc/nfvc6.py:208:    grad_norms = grads_flat.norm(dim=2, keepdim=True).clamp(min=1e-10)  # (N, B, 1)
+./misc/nfvc6.py:219:    dir_sum = weighted_dirs.sum(dim=1, keepdim=True).clamp(min=1e-10)  # (B, 1)
+./misc/nfvc6.py:480:    axes[2].set_title("IDGI");
+./misc/nfvc6.py:493:        f"IDGI:{info['idgi_compl']:.2f}  "
+./misc/nfvc6.py:679:        x = ((torch.randn(1, 3, 224, 224, device=device) * .2 + .5).clamp(0, 1) - m) / s
+./misc/nfvc6.py:709:    # 2. IDGI
+./misc/nfvc6.py:712:    print("2. IDGI (Importance-Driven Gradients Integration)")
+./misc/nfvc6.py:775:    print(f"{'':20} {'IG':>10} {'IDGI':>10} {'Guided IG':>12} {'NF-IG':>10}")
+./misc/nfvc6.py:808:                ("IDGI", idgi_logits, "#7F77DD"),
+./misc/nfvc6.py:814:                ("IDGI", dens_idgi, "#7F77DD"),
+./misc/nfvc6.py:824:            ("IDGI", idgi_path, "#7F77DD"),
+./misc/PARAMS_COMPARISON.md:1:# Parameter Comparison: signal_lam.py vs signal_lam_batched.py
+./misc/PARAMS_COMPARISON.md:5:### signal_lam.py: `joint_star_ig()`
+./misc/PARAMS_COMPARISON.md:15:    lam: float = 1.0,           # Signal-harvesting strength λ
+./misc/PARAMS_COMPARISON.md:23:### signal_lam_batched.py: `joint_star_ig_batched()`
+./misc/PARAMS_COMPARISON.md:33:    lam: float = 1.0,           # Signal-harvesting strength λ
+./misc/PARAMS_COMPARISON.md:43:| Parameter | signal_lam.py | signal_lam_batched.py | Match? |
+./misc/PARAMS_COMPARISON.md:52:| `lam` | float = 1.0 | float = 1.0 | ✓ |
+./misc/PARAMS_COMPARISON.md:66:from signal_lam import joint_star_ig
+./misc/PARAMS_COMPARISON.md:70:from signal_lam_batched import joint_star_ig_batched
+./misc/PARAMS_COMPARISON.md:73:# Same defaults: N=50, G=16, n_alternating=2, lam=1.0, tau=0.01, etc.
+./misc/PARAMS_COMPARISON.md:84:    lam=2.0,                  # Stronger signal harvesting
+./misc/PARAMS_COMPARISON.md:96:    lam=2.0,                  # Same
+./misc/PARAMS_COMPARISON.md:105:from lam import guided_ig
+./misc/PARAMS_COMPARISON.md:158:- **lam** (default: 1.0)
+./misc/PARAMS_COMPARISON.md:159:  - Signal-harvesting strength λ
+./misc/PARAMS_COMPARISON.md:161:  - λ→∞: pure signal harvesting (IDGI limit)
+./misc/PARAMS_COMPARISON.md:206:**Design principle:** `signal_lam_batched.py` is a **drop-in replacement** that:
+./misc/PARAMS_COMPARISON.md:212:- `signal_lam.py`: Sequential group evaluation
+./misc/PARAMS_COMPARISON.md:213:- `signal_lam_batched.py`: Batched group evaluation (faster)
+./misc/PARAMS_COMPARISON.md:222:from signal_lam import joint_star_ig
+./misc/PARAMS_COMPARISON.md:225:from signal_lam_batched import joint_star_ig_batched
+./misc/PARAMS_COMPARISON.md:242:from signal_lam_batched import validate_batched_implementation
+./misc/PARAMS_COMPARISON.md:253:from signal_lam_batched import joint_star_ig_batched
+./misc/PARAMS_COMPARISON.md:254:from lam import load_image_and_model, guided_ig
+./misc/PARAMS_COMPARISON.md:269:    lam=1.0,           # Signal harvesting
+./misc/PARAMS_COMPARISON.md:298:**signal_lam_batched.py is a perfect drop-in replacement for signal_lam.py!**
+./misc/QUICK_FIX.md:44:from signal_lam_batched import joint_star_ig_batched
+./misc/QUICK_FIX.md:51:    lam=1.0,
+./misc/run_lamp.py:2:run_lamp.py — Run all IG methods + LAMP and compare
+./misc/run_lamp.py:6:    python run_lamp.py                          # basic run
+./misc/run_lamp.py:7:    python run_lamp.py --viz                    # + heatmaps
+./misc/run_lamp.py:8:    python run_lamp.py --insdel                 # + insertion/deletion
+./misc/run_lamp.py:9:    python run_lamp.py --guided-init            # warm-start LAMP from Guided IG
+./misc/run_lamp.py:10:    python run_lamp.py --viz --insdel --steps 50
+./misc/run_lamp.py:12:Drop this file next to unified_ig.py, utilss.py, lamp.py and run.
+./misc/run_lamp.py:18:from lam import (
+./misc/run_lamp.py:29:from lamp import lamp, mu_lamp, print_decomposition
+./misc/run_lamp.py:64:    mulamp = mu_lamp(model, x, baseline, N, tau=0.005, n_iter=300)
+./misc/run_lamp.py:66:    lamp_result = lamp(
+./misc/run_lamp.py:72:    methods = [ig, idgi_, gig, muopt, joint, mulamp, lamp_result]
+./misc/run_lamp.py:131:    parser.add_argument("--viz-path",     type=str,   default="lamp_heatmaps.png")
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:14:**μ*_k ∝ |d_k| ≈ |Δf_k|**  ← This is EXACTLY IDGI!
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:20:from signal_lam import mu_optimized_ig
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:22:result = mu_optimized_ig(model, x, baseline, N=50, lam=1.0, tau=0.01)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:29:from signal_lam import joint_star_ig
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:31:result = joint_star_ig(model, x, baseline, N=50, lam=1.0, tau=0.01,
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:38:from signal_lam import run_all_methods
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:40:methods = run_all_methods(model, x, baseline, N=50, lam=1.0, tau=0.01)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:41:# Returns: [IG, IDGI, Guided IG, μ-Opt*, Joint(λ=0), Joint*]
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:48:| **λ** | 0.5-2.0 | 1.0 | Signal harvesting strength (0=pure LAM, ∞=pure IDGI) |
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:56:IDGI:           λ>0,  τ→0   →  μ ∝ |Δf|,        straight line
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:67:Obj = Var_ν - λ·signal + τ·L2  # Lower is better
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:73:python signal_lam.py --steps 50 --lam 1.0 --tau 0.01 \
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:84:**Result:** IDGI and Guided IG are now special cases of one unified objective!
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:95:## Code Organization (signal_lam.py)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:98:§1  compute_signal_harvesting_objective()          ← Evaluate Eq. 20
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:100:§3  optimize_mu_signal_harvesting()               ← Optimize μ (Phase 1)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:102:§5  _signal_harvesting_path_obj()                 ← Path objective
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:103:§6  optimize_path_signal_harvesting()             ← Optimize path (Phase 2)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:122:└─ I just need standard IDGI
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:123:   └─ Use mu_optimized_ig() with λ→large, τ→0.01 (approximates IDGI)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:130:| Low Q but high signal harvested | Decrease λ (favor conservation) |
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:131:| Noisy attributions | Increase λ (favor signal harvesting) |
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:138:- `signal_lam.py` - Main implementation
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:139:- `lam.py` - Path utilities, standard IG variants
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:150:result = mu_optimized_ig(model, x, baseline, N=100, lam=2.0, tau=0.005)
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:156:from lam import guided_ig
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:165:3. **IDGI is now derived**, not heuristic: μ*_k ∝ |d_k|
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:166:4. **L2 penalty is crucial**: linear condition → recovers IDGI exactly
+./misc/SIGNAL_HARVESTING_CHEATSHEET.md:167:5. **λ interpolates**: 0 (pure LAM) ↔ ∞ (pure IDGI)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:4:**Implementation:** `signal_lam.py`
+./misc/SIGNAL_HARVESTING_REFERENCE.md:25:2. **-λ Σ_k μ_k |d_k|** - Signal harvesting (NEW CONTRIBUTION)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:28:   - λ controls interpolation: λ=0 (pure conservation) ↔ λ→∞ (pure IDGI)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:32:   - LINEAR stationary condition (unlike entropy) → recovers IDGI exactly
+./misc/SIGNAL_HARVESTING_REFERENCE.md:60:**This is EXACTLY IDGI's measure** - now derived from first principles!
+./misc/SIGNAL_HARVESTING_REFERENCE.md:64:| Regularization | Stationary Condition | Recovers IDGI? |
+./misc/SIGNAL_HARVESTING_REFERENCE.md:84:| **IDGI** | fixed line | >0 | →0 | μ_k ∝ \|Δf_k\| |
+./misc/SIGNAL_HARVESTING_REFERENCE.md:94:### File: `signal_lam.py`
+./misc/SIGNAL_HARVESTING_REFERENCE.md:99:compute_signal_harvesting_objective(d, delta_f, mu, lam=1.0, tau=0.01)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:100:# Returns: (total_objective, var_nu_term, signal_term, l2_term)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:108:# mode="df" : μ*_k ∝ |Δf_k|  (IDGI approximation)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:114:optimize_mu_signal_harvesting(d, delta_f, lam=1.0, tau=0.01, n_iter=300, lr=0.05)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:118:#   λ → ∞ : μ* → |d_k|/Σ|d_j|      (IDGI)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:124:mu_optimized_ig(model, x, baseline, N=50, lam=1.0, tau=0.01, n_iter=300)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:132:optimize_path_signal_harvesting(model, x, baseline, mu, N=50, G=16,
+./misc/SIGNAL_HARVESTING_REFERENCE.md:133:                                 patch_size=14, n_iter=15, lr=0.08, lam=1.0)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:142:              n_alternating=2, lam=1.0, tau=0.01,
+./misc/SIGNAL_HARVESTING_REFERENCE.md:155:run_all_methods(model, x, baseline, N=50, lam=1.0, tau=0.01,
+./misc/SIGNAL_HARVESTING_REFERENCE.md:159:# Returns: [IG, IDGI, Guided IG, μ-Optimized*, Joint(λ=0), Joint*]
+./misc/SIGNAL_HARVESTING_REFERENCE.md:170:λ = 0.5    # Mild signal harvesting
+./misc/SIGNAL_HARVESTING_REFERENCE.md:172:λ = 2.0    # Strong signal harvesting
+./misc/SIGNAL_HARVESTING_REFERENCE.md:173:λ → ∞      # Pure IDGI limit
+./misc/SIGNAL_HARVESTING_REFERENCE.md:184:τ → 0      # Approaches IDGI (spike at max |d_k|)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:232:### Pattern 1: Drop-in IDGI Replacement (Zero Extra Cost)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:235:from signal_lam import mu_optimized_ig
+./misc/SIGNAL_HARVESTING_REFERENCE.md:240:    lam=1.0,    # Use signal harvesting
+./misc/SIGNAL_HARVESTING_REFERENCE.md:252:from signal_lam import joint_star_ig, guided_ig
+./misc/SIGNAL_HARVESTING_REFERENCE.md:260:    lam=1.0,
+./misc/SIGNAL_HARVESTING_REFERENCE.md:275:from signal_lam import run_all_methods
+./misc/SIGNAL_HARVESTING_REFERENCE.md:279:    N=50, lam=1.0, tau=0.01,
+./misc/SIGNAL_HARVESTING_REFERENCE.md:290:python signal_lam.py \
+./misc/SIGNAL_HARVESTING_REFERENCE.md:292:    --lam 1.0 \
+./misc/SIGNAL_HARVESTING_REFERENCE.md:309:2. **No signal preference:** Var_ν(φ) doesn't distinguish between transition and flat regions
+./misc/SIGNAL_HARVESTING_REFERENCE.md:310:3. **Signal harvesting solves both:** -λΣμ_k|d_k| forces μ toward high-|d_k| steps
+./misc/SIGNAL_HARVESTING_REFERENCE.md:312:### Why IDGI Dominates Empirically
+./misc/SIGNAL_HARVESTING_REFERENCE.md:314:IDGI is the **exact stationary measure** of the signal-harvesting action at λ > 0. Original LAM methods (Joint, μ-Opt) operate at λ = 0 and miss signal harvesting entirely.
+./misc/SIGNAL_HARVESTING_REFERENCE.md:318:The optimal attribution system is a **signal-harvesting optical instrument**:
+./misc/SIGNAL_HARVESTING_REFERENCE.md:320:- **Signal harvesting:** Concentrate detection window on bright transition region (maximize -λΣμ|d|)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:341:from lam import (
+./misc/SIGNAL_HARVESTING_REFERENCE.md:356:**Q: How does this relate to IDGI?**
+./misc/SIGNAL_HARVESTING_REFERENCE.md:357:A: IDGI is the exact solution when λ>0, τ→0, straight-line path. μ-Optimized* generalizes IDGI by also minimizing Var_ν.
+./misc/SIGNAL_HARVESTING_REFERENCE.md:360:A: Try increasing λ (stronger signal harvesting), check if model has high curvature, or use Joint* to optimize path.
+./misc/SIGNAL_HARVESTING_REFERENCE.md:366:A: Start with λ=1.0. If Var_ν is high but signal is harvested well, decrease λ. If attributions are noisy, increase λ.
+./misc/SIGNAL_HARVESTING_REFERENCE.md:378:- Joint* achieves lowest Var_ν while maintaining high signal harvesting
+./misc/SIGNAL_HARVESTING_REFERENCE.md:391:- Eq. 11: Continuous signal-harvesting action
+./misc/SIGNAL_HARVESTING_REFERENCE.md:399:- Sikdar et al. 2021: IDGI (now derived as special case)
+./misc/SIGNAL_HARVESTING_REFERENCE.md:408:"""Minimal example of signal-harvesting IG."""
+./misc/SIGNAL_HARVESTING_REFERENCE.md:411:from signal_lam import mu_optimized_ig, joint_star_ig
+./misc/SIGNAL_HARVESTING_REFERENCE.md:412:from lam import load_image_and_model
+./misc/SIGNAL_HARVESTING_REFERENCE.md:422:    lam=1.0,      # Signal harvesting strength
+./misc/SIGNAL_HARVESTING_REFERENCE.md:433:    lam=1.0,
+./misc/signal_lam.py:2:signal_harvesting.py — Signal-Harvesting Action for Integrated Gradients
+./misc/signal_lam.py:11:    Term 2: −λ Σ_k μ_k |d_k|  — signal harvested (transition concentration)
+./misc/signal_lam.py:16:    λ>0, τ→0    : IDGI             (μ_k ∝ |Δf_k|, straight line)
+./misc/signal_lam.py:19:    λ>0, τ>0    : Joint*           (full signal-harvesting solution)
+./misc/signal_lam.py:25:    from signal_harvesting import (
+./misc/signal_lam.py:26:        optimize_mu_signal_harvesting,
+./misc/signal_lam.py:30:        compute_signal_harvesting_objective,
+./misc/signal_lam.py:49:from lam import (
+./misc/signal_lam.py:62:def compute_signal_harvesting_objective(
+./misc/signal_lam.py:66:    lam: float = 1.0,
+./misc/signal_lam.py:70:    Evaluate the full signal-harvesting objective (Eq. 20):
+./misc/signal_lam.py:78:        lam:     signal-harvesting strength λ
+./misc/signal_lam.py:82:        (total_objective, var_nu_term, signal_term, l2_term)
+./misc/signal_lam.py:88:    signal = float((mu * d.abs()).sum())
+./misc/signal_lam.py:93:    total = var_nu - lam * signal + (tau / 2.0) * l2
+./misc/signal_lam.py:95:    return total, var_nu, signal, l2
+./misc/signal_lam.py:112:    This is the exact stationary point of the signal-harvesting action
+./misc/signal_lam.py:118:        mode:    "d" uses |d_k| (exact KKT), "df" uses |Δf_k| (IDGI)
+./misc/signal_lam.py:142:#       1. L2 penalty replaces entropy  (linear stationary condition → IDGI)
+./misc/signal_lam.py:143:#       2. Signal-harvesting term −λΣμ_k|d_k| added
+./misc/signal_lam.py:147:def optimize_mu_signal_harvesting(
+./misc/signal_lam.py:150:    lam: float = 1.0,
+./misc/signal_lam.py:156:    Find μ minimising the signal-harvesting objective (Eq. 24):
+./misc/signal_lam.py:166:      - Only the linear form recovers IDGI exactly (Proposition 8)
+./misc/signal_lam.py:170:        λ → ∞ :  μ* → |d_k| / Σ_j |d_j|         (IDGI)
+./misc/signal_lam.py:182:    abs_d = d.abs().detach()          # |d_k| for signal-harvesting term
+./misc/signal_lam.py:202:        signal_term = (mu * abs_d).sum()
+./misc/signal_lam.py:208:        loss = var_phi - lam * signal_term + (tau / 2.0) * l2_term
+./misc/signal_lam.py:245:    lam: float = 1.0,
+./misc/signal_lam.py:250:    Straight line + optimal μ under the signal-harvesting objective.
+./misc/signal_lam.py:253:    conservation-law objective (Var_ν) with signal harvesting (−λΣμ|d|)
+./misc/signal_lam.py:259:        lam=0 : pure conservation (original LAM μ-optimisation)
+./misc/signal_lam.py:260:        lam→∞ : recovers IDGI (μ_k ∝ |d_k|)
+./misc/signal_lam.py:269:    mu = optimize_mu_signal_harvesting(
+./misc/signal_lam.py:270:        d_arr, df_arr, lam=lam, tau=tau, n_iter=n_iter)
+./misc/signal_lam.py:294:def _signal_harvesting_path_obj(
+./misc/signal_lam.py:298:    lam: float = 1.0,
+./misc/signal_lam.py:305:    The signal-harvesting term forces the path toward regions where
+./misc/signal_lam.py:322:    signal = float((mu * d_v.abs()).sum())
+./misc/signal_lam.py:324:    return mse - lam * signal
+./misc/signal_lam.py:331:#     from the signal-harvesting action that pushes γ toward regions
+./misc/signal_lam.py:335:#     with the signal-harvesting path objective.
+./misc/signal_lam.py:338:def optimize_path_signal_harvesting(
+./misc/signal_lam.py:348:    lam: float = 1.0,
+./misc/signal_lam.py:352:    signal-harvesting objective.
+./misc/signal_lam.py:376:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam.py:395:        V = torch.clamp(V, min=0.01)
+./misc/signal_lam.py:398:# def optimize_path_signal_harvesting(
+./misc/signal_lam.py:408:#     lam: float = 1.0,
+./misc/signal_lam.py:424:#         return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam.py:457:#         V = torch.clamp(V, min=0.01)
+./misc/signal_lam.py:515:    lam: float = 1.0,
+./misc/signal_lam.py:522:    Joint* — the complete signal-harvesting solution (Table 1, last row).
+./misc/signal_lam.py:528:        on the signal-harvesting objective (Eq. 24).
+./misc/signal_lam.py:529:        Limiting: λ→0 gives original LAM, λ→∞ gives IDGI.
+./misc/signal_lam.py:533:        The signal-harvesting term forces γ toward the transition region.
+./misc/signal_lam.py:537:    lam : float
+./misc/signal_lam.py:538:        Signal-harvesting strength λ (Eq. 20). Controls interpolation:
+./misc/signal_lam.py:540:            λ → ∞   : pure signal harvesting (IDGI limit)
+./misc/signal_lam.py:550:    signal-harvesting objective. Guarantees Joint* ≥ init.
+./misc/signal_lam.py:570:    # ── Track best state (by signal-harvesting objective) ──
+./misc/signal_lam.py:608:        mu = optimize_mu_signal_harvesting(
+./misc/signal_lam.py:609:            d_arr, df_arr, lam=lam, tau=tau, n_iter=mu_iter)
+./misc/signal_lam.py:613:        obj_mu, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam.py:614:            d_arr, df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam.py:629:            new_gamma_pts = optimize_path_signal_harvesting(
+./misc/signal_lam.py:632:                lam=lam)
+./misc/signal_lam.py:638:            obj_new, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam.py:639:                new_d_arr, new_df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam.py:697:    lam: float = 1.0,
+./misc/signal_lam.py:709:    Returns list: [IG, IDGI, Guided IG, μ-Optimized*, Joint(λ=0), Joint*]
+./misc/signal_lam.py:711:    from lam import standard_ig, idgi, guided_ig, joint_ig
+./misc/signal_lam.py:718:    # 2. IDGI  (λ>0, τ→0, μ_k ∝ |Δf_k|)
+./misc/signal_lam.py:725:    # 4. μ-Optimized*  (straight line, signal-harvesting μ)
+./misc/signal_lam.py:727:        model, x, baseline, N, lam=lam, tau=tau, n_iter=mu_iter))
+./misc/signal_lam.py:729:    # # 5. Joint (λ=0)  — original LAM, no signal harvesting
+./misc/signal_lam.py:736:    # 6. Joint*  (λ>0) — full signal-harvesting solution
+./misc/signal_lam.py:740:        n_alternating=n_alternating, lam=lam, tau=tau,
+./misc/signal_lam.py:752:                   lam=1.0, tau=0.01, skip=0):
+./misc/signal_lam.py:754:    from lam import load_image_and_model
+./misc/signal_lam.py:771:    print(f"N = {N},  λ = {lam},  τ = {tau}\n")
+./misc/signal_lam.py:775:        lam=lam, tau=tau,
+./misc/signal_lam.py:788:        obj, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam.py:789:            d_arr, df_arr, mu_arr, lam=lam, tau=tau)
+./misc/signal_lam.py:794:        "config": {"N": N, "lam": lam, "tau": tau},
+./misc/signal_lam.py:817:    parser.add_argument("--lam", type=float, default=1.0,
+./misc/signal_lam.py:818:                        help="Signal-harvesting strength λ (0 = original LAM)")
+./misc/signal_lam.py:861:    from lam import visualize_attributions
+./misc/signal_lam.py:866:        guided_init=args.guided_init, lam=args.lam, tau=args.tau, skip=args.skip)
+./misc/signal_lam_batched.py:2:signal_lam_batched.py — Zero-Quality-Loss Batched Joint* Optimization
+./misc/signal_lam_batched.py:6:as original signal_lam.py, just faster.
+./misc/signal_lam_batched.py:15:    from signal_lam_batched import joint_star_ig_batched
+./misc/signal_lam_batched.py:17:    # Identical results to signal_lam.joint_star_ig, but ~3-5× faster
+./misc/signal_lam_batched.py:19:                                   G=16, n_alternating=2, lam=1.0, tau=0.01)
+./misc/signal_lam_batched.py:31:from signal_lam import (
+./misc/signal_lam_batched.py:32:    optimize_mu_signal_harvesting,
+./misc/signal_lam_batched.py:33:    compute_signal_harvesting_objective,
+./misc/signal_lam_batched.py:34:    _signal_harvesting_path_obj,
+./misc/signal_lam_batched.py:37:from lam import (
+./misc/signal_lam_batched.py:50:    Identical to lam._eval_path_batched but standalone for clarity.
+./misc/signal_lam_batched.py:182:def optimize_path_signal_harvesting_batched(
+./misc/signal_lam_batched.py:192:    lam: float = 1.0,
+./misc/signal_lam_batched.py:231:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam_batched.py:270:            obj_plus = _signal_harvesting_path_obj(d_list[g], df_list[g], mu, lam=lam)
+./misc/signal_lam_batched.py:275:        V = torch.clamp(V, min=0.01)
+./misc/signal_lam_batched.py:292:    lam: float = 1.0,
+./misc/signal_lam_batched.py:300:    Batched Joint* — IDENTICAL results to signal_lam.joint_star_ig, but faster.
+./misc/signal_lam_batched.py:313:        lam, tau: Signal-harvesting hyperparameters
+./misc/signal_lam_batched.py:358:        """Evaluate a path (same as signal_lam.py)."""
+./misc/signal_lam_batched.py:385:        mu = optimize_mu_signal_harvesting(
+./misc/signal_lam_batched.py:386:            d_arr, df_arr, lam=lam, tau=tau, n_iter=mu_iter)
+./misc/signal_lam_batched.py:389:        obj_mu, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_batched.py:390:            d_arr, df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam_batched.py:408:            new_gamma_pts = optimize_path_signal_harvesting_batched(
+./misc/signal_lam_batched.py:411:                lr=0.08, lam=lam, chunk_size=chunk_size)
+./misc/signal_lam_batched.py:416:            obj_new, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_batched.py:417:                new_d_arr, new_df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam_batched.py:468:def validate_batched_implementation(model, x, baseline, N=50, G=16, lam=1.0, tau=0.01,
+./misc/signal_lam_batched.py:482:    from signal_lam import joint_star_ig
+./misc/signal_lam_batched.py:488:        n_alternating=2, lam=lam, tau=tau,
+./misc/signal_lam_batched.py:497:        n_alternating=2, lam=lam, tau=tau,
+./misc/signal_lam_batched.py:553:    from lam import load_image_and_model
+./misc/signal_lam_batched.py:561:    validate_batched_implementation(model, x, baseline, N=50, G=16, lam=1.0, tau=0.01,
+./misc/signal_lam_eval.py:2:signal_lam_eval.py — Multi-Image Evaluation for Signal-Harvesting IG
+./misc/signal_lam_eval.py:8:    python signal_lam_eval.py --n 100 --image-folder ./sample_imagenet1k
+./misc/signal_lam_eval.py:9:    python signal_lam_eval.py --n 50 --steps 50 --lam 1.0
+./misc/signal_lam_eval.py:28:# Import from signal_lam.py
+./misc/signal_lam_eval.py:29:from signal_lam import (
+./misc/signal_lam_eval.py:31:    compute_signal_harvesting_objective,
+./misc/signal_lam_eval.py:34:from lam import ClassLogitModel
+./misc/signal_lam_eval.py:142:    lam: float,
+./misc/signal_lam_eval.py:156:    # Methods: IG, IDGI, Guided IG, μ-Optimized*, Joint(λ=0), Joint*
+./misc/signal_lam_eval.py:157:    method_names = ["IG", "IDGI", "Guided IG", "μ-Optimized*", "Joint(λ=0)", "Joint*"]
+./misc/signal_lam_eval.py:187:                lam=lam, tau=tau,
+./misc/signal_lam_eval.py:196:                obj, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_eval.py:197:                    d_arr, df_arr, mu_arr, lam=lam, tau=tau
+./misc/signal_lam_eval.py:287:    # Method parameters (same as signal_lam.py)
+./misc/signal_lam_eval.py:290:    parser.add_argument("--lam", type=float, default=1.0,
+./misc/signal_lam_eval.py:291:                        help="Signal-harvesting strength λ")
+./misc/signal_lam_eval.py:330:    print(f"Parameters: N={args.steps}, λ={args.lam}, τ={args.tau}")
+./misc/signal_lam_eval.py:355:        lam=args.lam,
+./misc/signal_lam_eval.py:372:                "lam": args.lam,
+./misc/signal_lam_fast.py:2:signal_lam_fast.py — Optimized Joint* with Batched Path Optimization
+./misc/signal_lam_fast.py:5:Drop-in replacements for signal_lam.py with vectorized/batched implementations
+./misc/signal_lam_fast.py:14:    from signal_lam_fast import joint_star_ig_fast, FastMode
+./misc/signal_lam_fast.py:36:from signal_lam import (
+./misc/signal_lam_fast.py:37:    optimize_mu_signal_harvesting,
+./misc/signal_lam_fast.py:38:    compute_signal_harvesting_objective,
+./misc/signal_lam_fast.py:41:from lam import (
+./misc/signal_lam_fast.py:59:def optimize_path_signal_harvesting_spsa(
+./misc/signal_lam_fast.py:69:    lam: float = 1.0,
+./misc/signal_lam_fast.py:86:    from signal_lam import _signal_harvesting_path_obj
+./misc/signal_lam_fast.py:99:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam_fast.py:112:        V_plus = torch.clamp(V + eps * delta, min=0.01)
+./misc/signal_lam_fast.py:113:        V_minus = torch.clamp(V - eps * delta, min=0.01)
+./misc/signal_lam_fast.py:121:        V = torch.clamp(V - lr * grad_V, min=0.01)
+./misc/signal_lam_fast.py:132:    Evaluate d_k, Δf_k for a single path (matches lam.py implementation).
+./misc/signal_lam_fast.py:152:def optimize_path_signal_harvesting_batched(
+./misc/signal_lam_fast.py:162:    lam: float = 1.0,
+./misc/signal_lam_fast.py:180:    from signal_lam import _signal_harvesting_path_obj
+./misc/signal_lam_fast.py:193:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam_fast.py:220:        V = torch.clamp(V - lr * grad_V, min=0.01)
+./misc/signal_lam_fast.py:278:    lam: float = 1.0,
+./misc/signal_lam_fast.py:294:        lam, tau: Signal-harvesting hyperparameters
+./misc/signal_lam_fast.py:359:        """Evaluate a path (same as signal_lam.py)."""
+./misc/signal_lam_fast.py:381:        path_opt_fn = optimize_path_signal_harvesting_spsa
+./misc/signal_lam_fast.py:384:        # For now, use original from signal_lam
+./misc/signal_lam_fast.py:385:        from signal_lam import optimize_path_signal_harvesting
+./misc/signal_lam_fast.py:386:        path_opt_fn = optimize_path_signal_harvesting
+./misc/signal_lam_fast.py:395:        mu = optimize_mu_signal_harvesting(
+./misc/signal_lam_fast.py:396:            d_arr, df_arr, lam=lam, tau=tau, n_iter=hp["mu_iter"])
+./misc/signal_lam_fast.py:399:        obj_mu, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_fast.py:400:            d_arr, df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam_fast.py:418:                lr=0.08, lam=lam)
+./misc/signal_lam_fast.py:423:            obj_new, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_fast.py:424:                new_d_arr, new_df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam_fast.py:475:def benchmark_modes(model, x, baseline, N=50, lam=1.0, tau=0.01):
+./misc/signal_lam_fast.py:486:                                    lam=lam, tau=tau)
+./misc/signal_lam_fast.py:514:    from lam import load_image_and_model
+./misc/signal_lam_fast.py:522:    results = benchmark_modes(model, x, baseline, N=50, lam=1.0, tau=0.01)
+./misc/signal_lam_x.py:2:signal_harvesting.py — Signal-Harvesting Action for Integrated Gradients
+./misc/signal_lam_x.py:11:    Term 2: −λ Σ_k μ_k |d_k|  — signal harvested (transition concentration)
+./misc/signal_lam_x.py:16:    λ>0, τ→0    : IDGI             (μ_k ∝ |Δf_k|, straight line)
+./misc/signal_lam_x.py:19:    λ>0, τ>0    : Joint*           (full signal-harvesting solution)
+./misc/signal_lam_x.py:25:    from signal_harvesting import (
+./misc/signal_lam_x.py:26:        optimize_mu_signal_harvesting,
+./misc/signal_lam_x.py:30:        compute_signal_harvesting_objective,
+./misc/signal_lam_x.py:49:from lam import (
+./misc/signal_lam_x.py:62:def compute_signal_harvesting_objective(
+./misc/signal_lam_x.py:66:    lam: float = 1.0,
+./misc/signal_lam_x.py:70:    Evaluate the full signal-harvesting objective (Eq. 20):
+./misc/signal_lam_x.py:78:        lam:     signal-harvesting strength λ
+./misc/signal_lam_x.py:82:        (total_objective, var_nu_term, signal_term, l2_term)
+./misc/signal_lam_x.py:88:    signal = float((mu * d.abs()).sum())
+./misc/signal_lam_x.py:93:    total = var_nu - lam * signal + (tau / 2.0) * l2
+./misc/signal_lam_x.py:95:    return total, var_nu, signal, l2
+./misc/signal_lam_x.py:112:    This is the exact stationary point of the signal-harvesting action
+./misc/signal_lam_x.py:118:        mode:    "d" uses |d_k| (exact KKT), "df" uses |Δf_k| (IDGI)
+./misc/signal_lam_x.py:142:#       1. L2 penalty replaces entropy  (linear stationary condition → IDGI)
+./misc/signal_lam_x.py:143:#       2. Signal-harvesting term −λΣμ_k|d_k| added
+./misc/signal_lam_x.py:147:def optimize_mu_signal_harvesting(
+./misc/signal_lam_x.py:150:    lam: float = 1.0,
+./misc/signal_lam_x.py:156:    Find μ minimising the signal-harvesting objective (Eq. 24):
+./misc/signal_lam_x.py:166:      - Only the linear form recovers IDGI exactly (Proposition 8)
+./misc/signal_lam_x.py:170:        λ → ∞ :  μ* → |d_k| / Σ_j |d_j|         (IDGI)
+./misc/signal_lam_x.py:182:    abs_d = d.abs().detach()          # |d_k| for signal-harvesting term
+./misc/signal_lam_x.py:202:        signal_term = (mu * abs_d).sum()
+./misc/signal_lam_x.py:208:        loss = var_phi - lam * signal_term + (tau / 2.0) * l2_term
+./misc/signal_lam_x.py:245:    lam: float = 1.0,
+./misc/signal_lam_x.py:250:    Straight line + optimal μ under the signal-harvesting objective.
+./misc/signal_lam_x.py:253:    conservation-law objective (Var_ν) with signal harvesting (−λΣμ|d|)
+./misc/signal_lam_x.py:259:        lam=0 : pure conservation (original LAM μ-optimisation)
+./misc/signal_lam_x.py:260:        lam→∞ : recovers IDGI (μ_k ∝ |d_k|)
+./misc/signal_lam_x.py:269:    mu = optimize_mu_signal_harvesting(
+./misc/signal_lam_x.py:270:        d_arr, df_arr, lam=lam, tau=tau, n_iter=n_iter)
+./misc/signal_lam_x.py:294:def _signal_harvesting_path_obj(
+./misc/signal_lam_x.py:298:    lam: float = 1.0,
+./misc/signal_lam_x.py:305:    The signal-harvesting term forces the path toward regions where
+./misc/signal_lam_x.py:322:    signal = float((mu * d_v.abs()).sum())
+./misc/signal_lam_x.py:324:    return mse - lam * signal
+./misc/signal_lam_x.py:331:#     from the signal-harvesting action that pushes γ toward regions
+./misc/signal_lam_x.py:335:#     with the signal-harvesting path objective.
+./misc/signal_lam_x.py:337:# def optimize_path_signal_harvesting(
+./misc/signal_lam_x.py:347:#     lam: float = 1.0,
+./misc/signal_lam_x.py:361:#         return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam_x.py:367:#         V_plus  = torch.clamp(V + eps * Delta, min=0.01)
+./misc/signal_lam_x.py:368:#         V_minus = torch.clamp(V - eps * Delta, min=0.01)
+./misc/signal_lam_x.py:376:#         V = torch.clamp(V - lr * grad_est, min=0.01)
+./misc/signal_lam_x.py:387:def optimize_path_signal_harvesting(
+./misc/signal_lam_x.py:397:    lam: float = 1.0,
+./misc/signal_lam_x.py:412:        return _signal_harvesting_path_obj(d_v, df_v, mu, lam=lam)
+./misc/signal_lam_x.py:422:            V_plus  = V.clone(); V_plus[:, k]  = torch.clamp(V[:, k] + eps * Delta_k, min=0.01)
+./misc/signal_lam_x.py:423:            V_minus = V.clone(); V_minus[:, k] = torch.clamp(V[:, k] - eps * Delta_k, min=0.01)
+./misc/signal_lam_x.py:430:            V[:, k] = torch.clamp(V[:, k] - lr * grad_k, min=0.01)
+./misc/signal_lam_x.py:458:    lam: float = 1.0,
+./misc/signal_lam_x.py:465:    Joint* — the complete signal-harvesting solution (Table 1, last row).
+./misc/signal_lam_x.py:471:        on the signal-harvesting objective (Eq. 24).
+./misc/signal_lam_x.py:472:        Limiting: λ→0 gives original LAM, λ→∞ gives IDGI.
+./misc/signal_lam_x.py:476:        The signal-harvesting term forces γ toward the transition region.
+./misc/signal_lam_x.py:480:    lam : float
+./misc/signal_lam_x.py:481:        Signal-harvesting strength λ (Eq. 20). Controls interpolation:
+./misc/signal_lam_x.py:483:            λ → ∞   : pure signal harvesting (IDGI limit)
+./misc/signal_lam_x.py:493:    signal-harvesting objective. Guarantees Joint* ≥ init.
+./misc/signal_lam_x.py:513:    # ── Track best state (by signal-harvesting objective) ──
+./misc/signal_lam_x.py:551:        mu = optimize_mu_signal_harvesting(
+./misc/signal_lam_x.py:552:            d_arr, df_arr, lam=lam, tau=tau, n_iter=mu_iter)
+./misc/signal_lam_x.py:556:        obj_mu, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_x.py:557:            d_arr, df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam_x.py:572:            new_gamma_pts = optimize_path_signal_harvesting(
+./misc/signal_lam_x.py:575:                lam=lam)
+./misc/signal_lam_x.py:581:            obj_new, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_x.py:582:                new_d_arr, new_df_arr, mu, lam=lam, tau=tau)
+./misc/signal_lam_x.py:640:    lam: float = 1.0,
+./misc/signal_lam_x.py:652:    Returns list: [IG, IDGI, Guided IG, μ-Optimized*, Joint(λ=0), Joint*]
+./misc/signal_lam_x.py:654:    from lam import standard_ig, idgi, guided_ig, joint_ig
+./misc/signal_lam_x.py:661:    # 2. IDGI  (λ>0, τ→0, μ_k ∝ |Δf_k|)
+./misc/signal_lam_x.py:668:    # 4. μ-Optimized*  (straight line, signal-harvesting μ)
+./misc/signal_lam_x.py:670:        model, x, baseline, N, lam=lam, tau=tau, n_iter=mu_iter))
+./misc/signal_lam_x.py:672:    # # 5. Joint (λ=0)  — original LAM, no signal harvesting
+./misc/signal_lam_x.py:679:    # 6. Joint*  (λ>0) — full signal-harvesting solution
+./misc/signal_lam_x.py:683:        n_alternating=n_alternating, lam=lam, tau=tau,
+./misc/signal_lam_x.py:695:                   lam=1.0, tau=0.01, skip=0):
+./misc/signal_lam_x.py:697:    from lam import load_image_and_model
+./misc/signal_lam_x.py:714:    print(f"N = {N},  λ = {lam},  τ = {tau}\n")
+./misc/signal_lam_x.py:718:        lam=lam, tau=tau,
+./misc/signal_lam_x.py:731:        obj, _, _, _ = compute_signal_harvesting_objective(
+./misc/signal_lam_x.py:732:            d_arr, df_arr, mu_arr, lam=lam, tau=tau)
+./misc/signal_lam_x.py:737:        "config": {"N": N, "lam": lam, "tau": tau},
+./misc/signal_lam_x.py:760:    parser.add_argument("--lam", type=float, default=1.0,
+./misc/signal_lam_x.py:761:                        help="Signal-harvesting strength λ (0 = original LAM)")
+./misc/signal_lam_x.py:804:    from lam import visualize_attributions
+./misc/signal_lam_x.py:809:        guided_init=args.guided_init, lam=args.lam, tau=args.tau, skip=args.skip)
+./misc/SPEED_COMPARISON.md:151:from signal_lam_fast import joint_star_ig_fast, FastMode
+./misc/SPEED_COMPARISON.md:158:    lam=1.0,
+./misc/SPEED_COMPARISON.md:175:    lam=1.0, tau=0.01
+./misc/SPEED_COMPARISON.md:188:    lam=1.0, tau=0.01
+./misc/SPEED_COMPARISON.md:195:from signal_lam_fast import benchmark_modes
+./misc/SPEED_COMPARISON.md:240:### ✅ Already Implemented (signal_lam_fast.py):
+./misc/SPEED_COMPARISON.md:265:python signal_lam_fast.py
+./misc/SPEED_COMPARISON.md:269:from signal_lam_fast import benchmark_modes
+./misc/SPEED_COMPARISON.md:270:from lam import load_image_and_model
+./misc/SPEED_COMPARISON.md:293:**Immediate action:** Use `signal_lam_fast.py` with `FastMode.FAST` for 3.6× speedup with minimal quality loss!
+./misc/test_batched.py:3:Quick test script for signal_lam_batched with chunk_size to avoid OOM.
+./misc/test_batched.py:10:from signal_lam_batched import joint_star_ig_batched
+./misc/test_batched.py:11:from lam import load_image_and_model
+./misc/test_batched.py:37:    lam=1.0,
+./misc/test_chunking_fix.py:5:from signal_lam_batched import joint_star_ig_batched
+./misc/test_chunking_fix.py:6:from lam import load_image_and_model
+./misc/test_chunking_fix.py:27:        n_alternating=2, lam=1.0, tau=0.01,
+./misc/test_chunking_fix.py:46:    n_alternating=2, lam=1.0, tau=0.01,
+./misc/test_chunking_fix.py:59:    n_alternating=2, lam=1.0, tau=0.01,
+./misc/test_chunking_fix.py:72:    n_alternating=2, lam=1.0, tau=0.01,
+./misc/uigv1.py:4:Unified framework generalizing IG, IDGI, and Guided IG.
+./misc/uigv1.py:17:  - Output-based scaling on straight line: ≈ IDGI
+./misc/uigv1.py:81:# 3. IDGI
+./misc/uigv1.py:86:    IDGI: importance sampling on the straight-line path.
+./misc/uigv1.py:107:    w_sum = w_stack.sum(0, keepdim=True).clamp(min=1e-8)
+./misc/uigv1.py:115:    g_norm = g_flat.norm(dim=2, keepdim=True).clamp(min=1e-10)
+./misc/uigv1.py:121:    d_sum = weighted.sum(dim=1, keepdim=True).clamp(min=1e-10)
+./misc/uigv1.py:205:    clamp_lo: float = 0.1      # minimum velocity scale factor
+./misc/uigv1.py:206:    clamp_hi: float = 10.0     # maximum velocity scale factor
+./misc/uigv1.py:219:      2. Scale velocity: γ'ᵢ *= (Δf/N) / gᵢ  (clamped)
+./misc/uigv1.py:264:            # Clamp to prevent explosion
+./misc/uigv1.py:265:            scale = max(cfg.clamp_lo, min(cfg.clamp_hi, scale))
+./misc/uigv1.py:554:        x = ((torch.randn(1,3,224,224,device=device)*.2+.5).clamp(0,1)-m)/s
+./misc/uigv1.py:565:        "IG": "#D85A30", "IDGI": "#7F77DD",
+./misc/uigv1.py:585:    # 2. IDGI
+./misc/uigv1.py:588:    print("2. IDGI")
+./misc/uigv1.py:623:        cfg=AdaptiveConfig(n_iters=10, clamp_lo=0.1, clamp_hi=10.0, momentum=0.5),
+./misc/uigv1.py:637:    print(f"{'':22} {'IG':>8} {'IDGI':>8} {'GuidedIG':>10} {'AP-IG':>8}")
+./misc/uigv1.py:650:    attrs = {"IG": attr_ig, "IDGI": attr_idgi, "Guided IG": attr_gig, "AP-IG": attr_ap}
+./misc/uigv1.py:654:            "IG": abs(ig_sum - delta_f), "IDGI": abs(idgi_sum - delta_f),
+./misc/uigv1.py:665:                ("IDGI", idgi_logits, colors["IDGI"]),
+./misc/uigv1.py:671:                ("IDGI", dens_idgi, colors["IDGI"]),
+./misc/uigv1.py:680:            ("IDGI", dens_idgi, colors["IDGI"]),
+./misc/uigv3.py:32:    Sikdar et al., "Integrated Directional Gradients" (ACL 2021)
+./misc/uigv3.py:242:    pixel_counts = (fractions * n_pixels).long().clamp(max=n_pixels)
+./misc/uigv3.py:373:        img = (x * std + mean).clamp(0, 1)
+./misc/uigv3.py:634:# §8  IDGI
+./misc/uigv3.py:640:    IDGI (Sikdar et al., 2021). Straight-line path, μ_k ∝ |Δf_k|.
+./misc/uigv3.py:674:        name="IDGI", attributions=attr,
+./misc/uigv3.py:1042:        raw = (torch.randn(1, 3, 224, 224, device=device) * 0.2 + 0.5).clamp(0, 1)
+./misc/uigv3.py:1073:    img = (x * std + mean).clamp(0, 1)
+./misc/uigv3.py:1165:        "IDGI":        "#8B5CF6",  # purple
+./misc/uigv3.py:1307:        "IDGI":        "#8B5CF6",
+./misc/uigv3.py:1345:        # Clamp y-axis for readability (IDGI can have extreme φ)
+./misc/uigv3.py:1396:        get_scores = lambda m: m.region_insdel
+./misc/uigv3.py:1400:        get_scores = lambda m: m.insdel
+./misc/uigv3.py:1413:        "IDGI":        "#8B5CF6",
+./misc/uigv4.py:32:    Sikdar et al., "Integrated Directional Gradients" (ACL 2021)
+./misc/uigv4.py:242:    pixel_counts = (fractions * n_pixels).long().clamp(max=n_pixels)
+./misc/uigv4.py:373:        img = (x * std + mean).clamp(0, 1)
+./misc/uigv4.py:634:# §8  IDGI
+./misc/uigv4.py:640:    IDGI (Sikdar et al., 2021). Straight-line path, μ_k ∝ |Δf_k|.
+./misc/uigv4.py:674:        name="IDGI", attributions=attr,
+./misc/uigv4.py:917:    v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)  # (G, 1)
+./misc/uigv4.py:994:        V = torch.clamp(V, min=0.01)
+./misc/uigv4.py:1210:        raw = (torch.randn(1, 3, 224, 224, device=device) * 0.2 + 0.5).clamp(0, 1)
+./misc/uigv4.py:1241:    img = (x * std + mean).clamp(0, 1)
+./misc/uigv4.py:1333:        "IDGI":        "#8B5CF6",  # purple
+./misc/uigv4.py:1475:        "IDGI":        "#8B5CF6",
+./misc/uigv4.py:1513:        # Clamp y-axis for readability (IDGI can have extreme φ)
+./misc/uigv4.py:1564:        get_scores = lambda m: m.region_insdel
+./misc/uigv4.py:1568:        get_scores = lambda m: m.insdel
+./misc/uigv4.py:1581:        "IDGI":        "#8B5CF6",
+./misc/uigv4o.py:233:# §8  IDGI  (OPT #1: removed redundant terminal _forward_scalar call)
+./misc/uigv4o.py:239:    IDGI (Sikdar et al., 2021).
+./misc/uigv4o.py:281:        name="IDGI", attributions=attr,
+./misc/uigv4o.py:524:    v_sums = V.sum(dim=1, keepdim=True).clamp(min=1e-12)
+./misc/uigv4o.py:580:        # No clamp needed — softmax handles normalisation
+./misc/uigv4o.py:747:        raw = (torch.randn(1, 3, 224, 224, device=device) * 0.2 + 0.5).clamp(0, 1)
+./misc/uigv4o.py:772:    img  = (x * std + mean).clamp(0, 1)
+./misc/uigv4o.py:821:        "IG": "#6B7280", "IDGI": "#8B5CF6", "Guided IG": "#06B6D4",
+./misc/unified_ig_v2.py:32:    Sikdar et al., "Integrated Directional Gradients" (ACL 2021)
+./misc/unified_ig_v2.py:235:    pixel_counts = (fractions * n_pixels).long().clamp(max=n_pixels)
+./misc/unified_ig_v2.py:437:# §8  IDGI
+./misc/unified_ig_v2.py:443:    IDGI (Sikdar et al., 2021). Straight-line path, μ_k ∝ |Δf_k|.
+./misc/unified_ig_v2.py:477:        name="IDGI", attributions=attr,
+./misc/unified_ig_v2.py:845:        raw = (torch.randn(1, 3, 224, 224, device=device) * 0.2 + 0.5).clamp(0, 1)
+./misc/unified_ig_v2.py:876:    img = (x * std + mean).clamp(0, 1)
+./misc/unified_ig_v2.py:968:        "IDGI":        "#8B5CF6",  # purple
+./misc/unified_ig_v2.py:1110:        "IDGI":        "#8B5CF6",
+./misc/unified_ig_v2.py:1148:        # Clamp y-axis for readability (IDGI can have extreme φ)
+./misc/unified_ig_v2.py:1203:        "IDGI":        "#8B5CF6",
+./misc/WHY_QUALITY_LOSS.md:400:from signal_lam_fast import joint_star_ig_fast, FastMode
+./misc/WHY_QUALITY_LOSS.md:401:from lam import load_image_and_model
+./misc/ZERO_LOSS_OPTIMIZATION.md:13:**Original Code (signal_lam.py, lines 379-395):**
+./misc/ZERO_LOSS_OPTIMIZATION.md:64:        obj_plus = _signal_harvesting_path_obj(d_list[g], df_list[g], mu)
+./misc/ZERO_LOSS_OPTIMIZATION.md:237:from signal_lam import joint_star_ig
+./misc/ZERO_LOSS_OPTIMIZATION.md:242:    lam=1.0, tau=0.01
+./misc/ZERO_LOSS_OPTIMIZATION.md:246:from signal_lam_batched import joint_star_ig_batched
+./misc/ZERO_LOSS_OPTIMIZATION.md:251:    lam=1.0, tau=0.01
+./misc/ZERO_LOSS_OPTIMIZATION.md:262:from signal_lam_batched import validate_batched_implementation
+./misc/ZERO_LOSS_OPTIMIZATION.md:331:grads = checkpoint(lambda pts: _gradient_batch(model, pts), pts_N_flat)
+./misc/ZERO_LOSS_OPTIMIZATION.md:358:- **Use `signal_lam_batched.py` for all Joint* evaluations**
+./misc/ZERO_LOSS_OPTIMIZATION.md:366:**Location:** `/Users/anhnd/CodingSpace/Python/UIG/signal_lam_batched.py`
+./misc/ZERO_LOSS_OPTIMIZATION.md:370:- `optimize_path_signal_harvesting_batched()` - Batched path optimization
+./misc/ZERO_LOSS_OPTIMIZATION.md:377:python signal_lam_batched.py
+./README.md:89:lam.py          Base IG implementations and utilities
+./sample_imagenet1k/gallery.md:11:| ![great_grey_owl](n01622779_great_grey_owl.JPEG) <br/> **great_grey_owl (24)** <br/> `n01622779` | ![European_fire_salamander](n01629819_European_fire_salamander.JPEG) <br/> **European_fire_salamander (25)** <br/> `n01629819` | ![common_newt](n01630670_common_newt.JPEG) <br/> **common_newt (26)** <br/> `n01630670` | ![eft](n01631663_eft.JPEG) <br/> **eft (27)** <br/> `n01631663` |
+./sample_imagenet1k/gallery.md:12:| ![spotted_salamander](n01632458_spotted_salamander.JPEG) <br/> **spotted_salamander (28)** <br/> `n01632458` | ![axolotl](n01632777_axolotl.JPEG) <br/> **axolotl (29)** <br/> `n01632777` | ![bullfrog](n01641577_bullfrog.JPEG) <br/> **bullfrog (30)** <br/> `n01641577` | ![tree_frog](n01644373_tree_frog.JPEG) <br/> **tree_frog (31)** <br/> `n01644373` |
+./sample_imagenet1k/gallery.md:37:| ![black_stork](n02002724_black_stork.JPEG) <br/> **black_stork (128)** <br/> `n02002724` | ![spoonbill](n02006656_spoonbill.JPEG) <br/> **spoonbill (129)** <br/> `n02006656` | ![flamingo](n02007558_flamingo.JPEG) <br/> **flamingo (130)** <br/> `n02007558` | ![little_blue_heron](n02009229_little_blue_heron.JPEG) <br/> **little_blue_heron (131)** <br/> `n02009229` |
+./sample_imagenet1k/gallery.md:67:| ![Eskimo_dog](n02109961_Eskimo_dog.JPEG) <br/> **Eskimo_dog (248)** <br/> `n02109961` | ![malamute](n02110063_malamute.JPEG) <br/> **malamute (249)** <br/> `n02110063` | ![Siberian_husky](n02110185_Siberian_husky.JPEG) <br/> **Siberian_husky (250)** <br/> `n02110185` | ![dalmatian](n02110341_dalmatian.JPEG) <br/> **dalmatian (251)** <br/> `n02110341` |
+./sample_imagenet1k/gallery.md:93:| ![impala](n02422699_impala.JPEG) <br/> **impala (352)** <br/> `n02422699` | ![gazelle](n02423022_gazelle.JPEG) <br/> **gazelle (353)** <br/> `n02423022` | ![Arabian_camel](n02437312_Arabian_camel.JPEG) <br/> **Arabian_camel (354)** <br/> `n02437312` | ![llama](n02437616_llama.JPEG) <br/> **llama (355)** <br/> `n02437616` |
+./sample_imagenet1k/gallery.md:159:| ![knot](n03627232_knot.JPEG) <br/> **knot (616)** <br/> `n03627232` | ![lab_coat](n03630383_lab_coat.JPEG) <br/> **lab_coat (617)** <br/> `n03630383` | ![ladle](n03633091_ladle.JPEG) <br/> **ladle (618)** <br/> `n03633091` | ![lampshade](n03637318_lampshade.JPEG) <br/> **lampshade (619)** <br/> `n03637318` |
+./sample_imagenet1k/gallery.md:216:| ![switch](n04372370_switch.JPEG) <br/> **switch (844)** <br/> `n04372370` | ![syringe](n04376876_syringe.JPEG) <br/> **syringe (845)** <br/> `n04376876` | ![table_lamp](n04380533_table_lamp.JPEG) <br/> **table_lamp (846)** <br/> `n04380533` | ![tank](n04389033_tank.JPEG) <br/> **tank (847)** <br/> `n04389033` |
+./tests/test_attribution_methods.py:9:import lam
+./tests/test_attribution_methods.py:10:from lam import idg_pdf, standard_ig
+./tests/test_attribution_methods.py:95:    delta_x, _, _, d_list, df_list, f_vals, _ = lam._straight_line_pass(
+./tests/test_attribution_methods.py:119:    _, _, _, d_list, df_list, _, _ = lam._straight_line_pass(
+./tests/test_attribution_methods.py:163:        "lambda",
+./tests/test_attribution_methods.py:164:        "signal",
+./tests/test_attribution_methods.py:172:        inspect.getsource(lam.optimize_mu),
+./tests/test_attribution_methods.py:174:        assert "lam" not in inspect.signature(lam.optimize_mu).parameters
+./utilss.py:182:        img  = (x * std + mean).clamp(0, 1)
+./utilss.py:558:    return float(q.clamp(0.0, 1.0))
+./u_optimize.py:35:from lam import (
+./u_optimize.py:174:    from lam import standard_ig, idg_pdf
+./u_optimize.py:198:    from lam import load_image_and_model
+./u_optimize.py:322:    from lam import visualize_attributions
+./u_optimize.py:326:        from lam import load_image_and_model

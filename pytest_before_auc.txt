@@ -1,0 +1,42 @@
+
+==================================== ERRORS ====================================
+____________________ ERROR collecting misc/test_batched.py _____________________
+ImportError while importing test module '/mnt/data/HUST DOCUMENT/LIG/misc/test_batched.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/home/tam/miniconda3/envs/ai_stable/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+misc/test_batched.py:10: in <module>
+    from signal_lam_batched import joint_star_ig_batched
+misc/signal_lam_batched.py:30: in <module>
+    from utilss import AttributionResult, compute_all_metrics
+E   ModuleNotFoundError: No module named 'utilss'
+__________________ ERROR collecting misc/test_chunking_fix.py __________________
+ImportError while importing test module '/mnt/data/HUST DOCUMENT/LIG/misc/test_chunking_fix.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/home/tam/miniconda3/envs/ai_stable/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+misc/test_chunking_fix.py:5: in <module>
+    from signal_lam_batched import joint_star_ig_batched
+misc/signal_lam_batched.py:30: in <module>
+    from utilss import AttributionResult, compute_all_metrics
+E   ModuleNotFoundError: No module named 'utilss'
+______________ ERROR collecting tests/test_attribution_methods.py ______________
+ImportError while importing test module '/mnt/data/HUST DOCUMENT/LIG/tests/test_attribution_methods.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/home/tam/miniconda3/envs/ai_stable/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_attribution_methods.py:8: in <module>
+    import u_optimize
+E   ModuleNotFoundError: No module named 'u_optimize'
+=========================== short test summary info ============================
+ERROR misc/test_batched.py
+ERROR misc/test_chunking_fix.py
+ERROR tests/test_attribution_methods.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 3 errors during collection !!!!!!!!!!!!!!!!!!!!
+3 errors in 1.05s

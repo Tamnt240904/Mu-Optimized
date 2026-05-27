@@ -1,0 +1,13 @@
+.git
+.vscode
+.idea
+.DS_Store
+__pycache__
+*.pyc
+env/
+venv/
+.env
+.claude
+result/
+.push.sh
+*.png
