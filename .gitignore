@@ -11,3 +11,6 @@ venv/
 result/
 .push.sh
 *.png
+output/
+result/
+*.JPEG

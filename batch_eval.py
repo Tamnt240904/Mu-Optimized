@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         description="Run IG, IDG-PDF, and μ-Optimized IG on multiple images."
     )
     parser.add_argument("--num-images", type=int, default=10)
-    parser.add_argument("--image-dir", type=str, default="sample_imagenet1k")
+    parser.add_argument("--image-dir", type=str, default="generated_imagenet/imagenet_resnet50_correct_1000")
     parser.add_argument("--output-json", type=str,
                         default="results/batch_auc_N64_tau001.json")
     parser.add_argument("--steps", type=int, default=64)
