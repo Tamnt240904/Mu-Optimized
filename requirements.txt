@@ -1,0 +1,7 @@
+torch
+torchvision
+datasets
+pillow
+tqdm
+matplotlib
+scikit-image

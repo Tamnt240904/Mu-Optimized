@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Batch attribution and insertion/deletion evaluation for local images."""
+"""Batch attribution and insertion/deletion evaluation for selected images."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 from collections import defaultdict
@@ -37,17 +38,37 @@ METHOD_SUMMARY_KEYS = [
     "weighted_residual_l2",
     "elapsed_s",
 ]
-AGGREGATE_KEYS = ["Q", "insertion_auc", "deletion_auc", "insdel"]
+AGGREGATE_KEYS = [
+    "Q",
+    "CV2",
+    "Var_nu",
+    "mu_l2_sq",
+    "mu_entropy",
+    "mu_max",
+    "weighted_residual_l1",
+    "weighted_residual_l2",
+    "insertion_auc",
+    "deletion_auc",
+    "insdel",
+]
+MODEL_LOADERS = {
+    "resnet50": (models.resnet50, models.ResNet50_Weights.DEFAULT),
+    "vgg16": (models.vgg16, models.VGG16_Weights.DEFAULT),
+    "densenet121": (models.densenet121, models.DenseNet121_Weights.DEFAULT),
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run IG, IDG-PDF, and μ-Optimized IG on multiple images."
     )
-    parser.add_argument("--num-images", type=int, default=10)
-    parser.add_argument("--image-dir", type=str, default="generated_imagenet/imagenet_resnet50_correct_1000")
-    parser.add_argument("--output-json", type=str,
-                        default="results/batch_auc_N64_tau001.json")
+    parser.add_argument("--num-images", type=int, default=200)
+    parser.add_argument("--selected-csv", type=str, default=None)
+    parser.add_argument("--image-dir", type=str,
+                        default="generated_imagenet/imagenet_resnet50_correct_1000")
+    parser.add_argument("--model-name", choices=sorted(MODEL_LOADERS),
+                        default="resnet50")
+    parser.add_argument("--output-json", type=str, default=None)
     parser.add_argument("--steps", type=int, default=64)
     parser.add_argument("--tau", type=float, default=0.01)
     parser.add_argument("--iters", type=int, default=300)
@@ -55,6 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--insdel", action="store_true")
     parser.add_argument("--insdel-steps", type=int, default=50)
     parser.add_argument("--target-class", type=int, default=None)
+    parser.add_argument("--target-from-csv", choices=["resnet50_pred"], default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--skip-errors", action="store_true")
     parser.add_argument("--device", type=str, default=None)
@@ -70,7 +92,27 @@ def imagenet_transform() -> T.Compose:
     ])
 
 
-def list_images(image_dir: Path, num_images: int) -> list[Path]:
+def tau_tag(tau: float) -> str:
+    return f"{tau:g}".replace(".", "p").replace("-", "m")
+
+
+def default_output_path(args: argparse.Namespace) -> Path:
+    return Path(
+        "results"
+    ) / f"full_eval_seed{args.seed}_{args.model_name}_N{args.steps}_tau{tau_tag(args.tau)}.json"
+
+
+def load_backbone(model_name: str, device: torch.device):
+    builder, weights = MODEL_LOADERS[model_name]
+    backbone = builder(weights=weights).to(device).eval()
+    for parameter in backbone.parameters():
+        parameter.requires_grad_(False)
+    transform = weights.transforms() if hasattr(weights, "transforms") else imagenet_transform()
+    categories = weights.meta.get("categories", [])
+    return backbone, transform, categories
+
+
+def list_images(image_dir: Path, num_images: int) -> list[dict[str, Any]]:
     if num_images <= 0:
         raise ValueError(f"--num-images must be positive, got {num_images}")
     if not image_dir.is_dir():
@@ -81,41 +123,75 @@ def list_images(image_dir: Path, num_images: int) -> list[Path]:
     )
     if not images:
         raise FileNotFoundError(f"no image files found in: {image_dir}")
-    return images[:num_images]
+    return [
+        {
+            "rank": index,
+            "image_path": str(path),
+            "copied_image_path": str(path),
+            "image_name": path.name,
+            "resnet50_selection_score": None,
+            "resnet50_predicted_label_idx": None,
+        }
+        for index, path in enumerate(images[:num_images], start=1)
+    ]
 
 
-def load_backbone(device: torch.device) -> torch.nn.Module:
-    backbone = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-    backbone = backbone.to(device).eval()
-    for parameter in backbone.parameters():
-        parameter.requires_grad_(False)
-    return backbone
-
-
-def class_name_from_path(path: Path) -> str | None:
-    stem = path.stem
-    parts = stem.split("_", 1)
-    if len(parts) == 2 and parts[0].startswith("n") and parts[0][1:].isdigit():
-        return parts[1].replace("_", " ")
-    return None
+def read_selected_csv(csv_path: Path, num_images: int) -> list[dict[str, Any]]:
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"selected CSV not found: {csv_path}")
+    with csv_path.open(newline="", encoding="utf-8") as file:
+        rows = list(csv.DictReader(file))
+    rows.sort(key=lambda row: int(row.get("rank", 10**9)))
+    selected = []
+    for row in rows[:num_images]:
+        image_path = row.get("copied_image_path") or row.get("image_path")
+        if not image_path and row.get("image_name"):
+            sibling_dir = csv_path.with_suffix("")
+            image_path = str(sibling_dir / row["image_name"])
+        if not image_path:
+            raise ValueError(f"missing image path in {csv_path}")
+        selected.append({
+            "rank": int(row["rank"]),
+            "image_path": image_path,
+            "copied_image_path": row.get("copied_image_path", image_path),
+            "image_name": row.get("image_name") or Path(image_path).name,
+            "resnet50_selection_score": parse_float(row.get("top1_score") or row.get("score")),
+            "resnet50_predicted_label_idx": parse_int(row.get("predicted_label_idx")),
+        })
+    return selected
 
 
 def load_image_tensor(path: Path, transform: T.Compose,
                       device: torch.device) -> torch.Tensor:
-    image = Image.open(path).convert("RGB")
-    return transform(image).unsqueeze(0).to(device)
+    with Image.open(path) as image:
+        return transform(image.convert("RGB")).contiguous().unsqueeze(0).to(device)
+
+
+def parse_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def parse_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
 
 
 @torch.no_grad()
-def select_target(backbone: torch.nn.Module, x: torch.Tensor,
-                  target_class: int | None) -> tuple[int, float]:
+def select_target(
+    backbone: torch.nn.Module,
+    x: torch.Tensor,
+    target_class: int | None,
+) -> tuple[int, float]:
     probs = F.softmax(backbone(x), dim=-1)[0]
     if target_class is None:
         confidence, predicted = probs.max(0)
         return int(predicted.item()), float(confidence.item())
     if target_class < 0 or target_class >= probs.numel():
         raise ValueError(
-            f"--target-class must be in [0, {probs.numel() - 1}], got {target_class}"
+            f"target class must be in [0, {probs.numel() - 1}], got {target_class}"
         )
     return target_class, float(probs[target_class].item())
 
@@ -129,13 +205,7 @@ def validate_successful_image(image_result: dict[str, Any], insdel_steps: int,
                               require_insdel: bool) -> None:
     methods = image_result.get("methods", {})
     if set(methods) != set(METHOD_NAMES):
-        missing = sorted(set(METHOD_NAMES) - set(methods))
-        extra = sorted(set(methods) - set(METHOD_NAMES))
-        raise ValueError(
-            f"{image_result.get('image_name')}: method mismatch; "
-            f"missing={missing}, extra={extra}"
-        )
-
+        raise ValueError(f"{image_result.get('image_name')}: method mismatch")
     for method_name, metrics in methods.items():
         q = metrics.get("Q")
         if not isinstance(q, (int, float)) or not (-1e-7 <= q <= 1.0 + 1e-7):
@@ -149,71 +219,57 @@ def validate_successful_image(image_result: dict[str, Any], insdel_steps: int,
     if require_insdel:
         insertion_deletion = image_result.get("insertion_deletion")
         if not isinstance(insertion_deletion, dict):
-            raise ValueError(
-                f"{image_result.get('image_name')}: missing insertion_deletion"
-            )
+            raise ValueError(f"{image_result.get('image_name')}: missing insdel")
         for method_name, metrics in insertion_deletion.get("methods", {}).items():
-            insertion_curve = metrics.get("insertion_curve")
-            deletion_curve = metrics.get("deletion_curve")
-            if not isinstance(insertion_curve, list):
-                raise ValueError(
-                    f"{image_result.get('image_name')} {method_name}: "
-                    "insertion_curve is not a list"
-                )
-            if not isinstance(deletion_curve, list):
-                raise ValueError(
-                    f"{image_result.get('image_name')} {method_name}: "
-                    "deletion_curve is not a list"
-                )
-            if len(insertion_curve) != insdel_steps + 1:
-                raise ValueError(
-                    f"{image_result.get('image_name')} {method_name}: "
-                    "invalid insertion_curve length"
-                )
-            if len(deletion_curve) != insdel_steps + 1:
-                raise ValueError(
-                    f"{image_result.get('image_name')} {method_name}: "
-                    "invalid deletion_curve length"
-                )
+            if len(metrics.get("insertion_curve", [])) != insdel_steps + 1:
+                raise ValueError(f"{image_result.get('image_name')} {method_name}: bad insertion curve")
+            if len(metrics.get("deletion_curve", [])) != insdel_steps + 1:
+                raise ValueError(f"{image_result.get('image_name')} {method_name}: bad deletion curve")
             if not math.isfinite(metrics.get("insertion_auc")):
-                raise ValueError(
-                    f"{image_result.get('image_name')} {method_name}: "
-                    "insertion_auc is not finite"
-                )
+                raise ValueError(f"{image_result.get('image_name')} {method_name}: bad insertion AUC")
             if not math.isfinite(metrics.get("deletion_auc")):
-                raise ValueError(
-                    f"{image_result.get('image_name')} {method_name}: "
-                    "deletion_auc is not finite"
-                )
+                raise ValueError(f"{image_result.get('image_name')} {method_name}: bad deletion AUC")
+
+
+def csv_target(entry: dict[str, Any]) -> int:
+    value = entry.get("resnet50_predicted_label_idx")
+    if value is None:
+        raise ValueError("--target-from-csv resnet50_pred requires predicted_label_idx")
+    return int(value)
 
 
 def run_one_image(
-    image_path: Path,
+    entry: dict[str, Any],
     backbone: torch.nn.Module,
     transform: T.Compose,
+    categories: list[str],
     device: torch.device,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    image_path = Path(entry["copied_image_path"] or entry["image_path"])
     x = load_image_tensor(image_path, transform, device)
-    target_class, confidence = select_target(backbone, x, args.target_class)
+    if args.target_class is not None:
+        forced_target = args.target_class
+    elif args.target_from_csv == "resnet50_pred":
+        forced_target = csv_target(entry)
+    else:
+        forced_target = None
+    target_class, target_score = select_target(backbone, x, forced_target)
     model = ClassLogitModel(backbone, target_class=target_class).to(device).eval()
     baseline = torch.zeros_like(x)
     methods = run_all_methods(
-        model,
-        x,
-        baseline,
-        N=args.steps,
-        tau=args.tau,
-        mu_iter=args.iters,
-        lr=args.lr,
-    )
+        model, x, baseline, N=args.steps, tau=args.tau,
+        mu_iter=args.iters, lr=args.lr)
 
+    target_name = categories[target_class] if categories else None
     image_result: dict[str, Any] = {
         "image_path": str(image_path),
-        "image_name": image_path.name,
+        "image_name": entry["image_name"],
+        "rank": entry.get("rank"),
+        "resnet50_selection_score": entry.get("resnet50_selection_score"),
         "target_class": target_class,
-        "confidence": confidence,
-        "class_name": class_name_from_path(image_path),
+        "target_score": target_score,
+        "target_label_name": target_name,
         "success": True,
         "methods": {method.name: method_summary(method) for method in methods},
     }
@@ -230,11 +286,10 @@ def run_one_image(
 
 
 def finite_values(values: list[Any]) -> list[float]:
-    output = []
-    for value in values:
-        if isinstance(value, (int, float)) and math.isfinite(value):
-            output.append(float(value))
-    return output
+    return [
+        float(value) for value in values
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    ]
 
 
 def mean_std(values: list[Any]) -> tuple[float | None, float | None]:
@@ -252,7 +307,8 @@ def compute_aggregate(images: list[dict[str, Any]]) -> dict[str, Any]:
         if not image.get("success"):
             continue
         for method_name, metrics in image.get("methods", {}).items():
-            values[method_name]["Q"].append(metrics.get("Q"))
+            for key in METHOD_SUMMARY_KEYS:
+                values[method_name][key].append(metrics.get(key))
         insertion_deletion = image.get("insertion_deletion", {})
         for method_name, metrics in insertion_deletion.get("methods", {}).items():
             values[method_name]["insertion_auc"].append(metrics.get("insertion_auc"))
@@ -267,7 +323,40 @@ def compute_aggregate(images: list[dict[str, Any]]) -> dict[str, Any]:
             method_agg[f"{key}_mean"] = mean
             method_agg[f"{key}_std"] = std
         aggregate["methods"][method_name] = method_agg
+    aggregate["num_images_success"] = sum(1 for image in images if image.get("success"))
+    aggregate["num_images_failed"] = sum(1 for image in images if not image.get("success"))
     return aggregate
+
+
+def build_output(args: argparse.Namespace, entries: list[dict[str, Any]],
+                 images: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "config": {
+            "seed": args.seed,
+            "model_name": args.model_name,
+            "steps": args.steps,
+            "tau": args.tau,
+            "iters": args.iters,
+            "lr": args.lr,
+            "num_images": len(entries),
+            "selection_csv": args.selected_csv,
+            "image_dir": None if args.selected_csv else args.image_dir,
+            "target_from_csv": args.target_from_csv,
+            "target_class": args.target_class,
+            "insdel": args.insdel,
+            "insdel_steps": args.insdel_steps,
+            "skip_errors": args.skip_errors,
+        },
+        "images": images,
+        "aggregate": compute_aggregate(images),
+    }
+
+
+def write_output(path: Path, output: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(output, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def fmt_mean_std(mean: Any, std: Any) -> str:
@@ -299,52 +388,40 @@ def main() -> int:
     args = parse_args()
     set_seed(args.seed)
     device = get_device(force=args.device)
-    image_paths = list_images(Path(args.image_dir), args.num_images)
+    entries = (
+        read_selected_csv(Path(args.selected_csv), args.num_images)
+        if args.selected_csv
+        else list_images(Path(args.image_dir), args.num_images)
+    )
+    output_path = Path(args.output_json) if args.output_json else default_output_path(args)
 
-    backbone = load_backbone(device)
-    transform = imagenet_transform()
+    backbone, transform, categories = load_backbone(args.model_name, device)
     images: list[dict[str, Any]] = []
+    print(f"Model: {args.model_name}")
+    print(f"Images: {len(entries)}")
+    print(f"Output: {output_path}")
 
-    for index, image_path in enumerate(image_paths, start=1):
-        print(f"[{index}/{len(image_paths)}] {image_path.name}")
+    for index, entry in enumerate(entries, start=1):
+        print(f"[{index}/{len(entries)}] rank={entry.get('rank')} {entry['image_name']}")
         try:
-            images.append(run_one_image(image_path, backbone, transform, device, args))
+            images.append(run_one_image(entry, backbone, transform, categories, device, args))
         except Exception as exc:
             if not args.skip_errors:
                 raise
             print(f"  ERROR: {exc}")
             images.append({
-                "image_path": str(image_path),
-                "image_name": image_path.name,
+                "image_path": entry.get("copied_image_path") or entry.get("image_path"),
+                "image_name": entry.get("image_name"),
+                "rank": entry.get("rank"),
+                "resnet50_selection_score": entry.get("resnet50_selection_score"),
                 "success": False,
                 "error": str(exc),
             })
+        write_output(output_path, build_output(args, entries, images))
 
-    aggregate = compute_aggregate(images)
-    output = {
-        "config": {
-            "num_images": len(image_paths),
-            "image_dir": args.image_dir,
-            "steps": args.steps,
-            "tau": args.tau,
-            "iters": args.iters,
-            "lr": args.lr,
-            "target_class": args.target_class,
-            "insdel": args.insdel,
-            "insdel_steps": args.insdel_steps,
-            "seed": args.seed,
-            "skip_errors": args.skip_errors,
-        },
-        "images": images,
-        "aggregate": aggregate,
-    }
-
-    output_path = Path(args.output_json)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2)
-
-    print_summary_table(aggregate)
+    output = build_output(args, entries, images)
+    write_output(output_path, output)
+    print_summary_table(output["aggregate"])
     print(f"\nBatch results -> {output_path}")
     return 0
 

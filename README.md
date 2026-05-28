@@ -351,8 +351,121 @@ The implementation applies this through a shared `completeness_rescale` utility.
 ```
 torch >= 2.0
 torchvision
+datasets           (for Hugging Face ImageNet validation streaming)
+pillow
+tqdm
 matplotlib         (for --viz flags)
 scikit-image       (optional, for SLIC superpixels in --region-insdel)
+```
+
+## Kaggle Pipeline
+
+This repository can run a multi-seed ImageNet experiment in four stages:
+
+1. Select images with torchvision ResNet50 only.
+2. Sweep μ-Optimized IG hyperparameters on the top 20 selected images.
+3. Evaluate the same selected images on ResNet50, VGG16, and DenseNet121.
+4. Summarize JSON outputs to CSV and Markdown.
+
+The attribution definitions are unchanged: IG uses uniform weights, IDG-PDF
+uses `μ_k = |Δf_k| / Σ_j |Δf_j|`, and μ-Optimized IG solves
+`min_{μ∈simplex} -Q(μ) + τ/2 ||μ||²`.
+
+```bash
+# Kaggle notebook setup
+git clone <your-repo-url> lig
+cd lig
+pip install -r requirements.txt
+```
+
+Prepare ResNet50-selected datasets for seeds 0 through 4:
+
+```bash
+python prepare_imagenet_resnet_dataset.py \
+  --seeds 0 1 2 3 4 \
+  --candidate-count 5000 \
+  --select-count 200 \
+  --output-root data/imagenet_resnet50_selected \
+  --batch-size 64 \
+  --device cuda \
+  --resume
+```
+
+If you attach a local ImageNet validation dataset, pass its root:
+
+```bash
+python prepare_imagenet_resnet_dataset.py \
+  --imagenet-root /kaggle/input/imagenet/val \
+  --seeds 0 1 2 3 4 \
+  --candidate-count 5000 \
+  --select-count 200 \
+  --output-root data/imagenet_resnet50_selected \
+  --device cuda
+```
+
+Run the μ-Optimized hyperparameter sweep for one seed:
+
+```bash
+python sweep_mu_config.py \
+  --selection-csv data/imagenet_resnet50_selected/seed_0/selected.csv \
+  --seed 0 \
+  --tau-grid 0.001 0.005 0.01 0.05 0.1 1.0 \
+  --steps-grid 16 32 64 128 \
+  --num-images 20 \
+  --output-dir results/sweeps \
+  --device cuda \
+  --skip-errors
+```
+
+Run full evaluation for one seed/model using the best config from the sweep:
+
+```bash
+python batch_eval.py \
+  --selected-csv data/imagenet_resnet50_selected/seed_0/selected.csv \
+  --num-images 200 \
+  --model-name resnet50 \
+  --steps 64 \
+  --tau 0.001 \
+  --iters 300 \
+  --insdel \
+  --insdel-steps 50 \
+  --seed 0 \
+  --device cuda \
+  --skip-errors \
+  --output-json results/full_eval_seed0_resnet50_N64_tau0p001.json
+```
+
+Summarize all full evaluation outputs:
+
+```bash
+python summarize_full_eval.py \
+  --input-glob "results/full_eval_seed*_*.json" \
+  --output-csv results/full_eval_summary.csv \
+  --output-md results/full_eval_summary.md
+```
+
+The orchestration script runs the same stages:
+
+```bash
+# Single process/GPU
+MODE=all bash scripts/run_kaggle_pipeline.sh
+
+# Two process-level GPU workers
+RUN_TWO_GPU=1 MODE=all bash scripts/run_kaggle_pipeline.sh
+
+# Manual split
+GPU_ID=0 SEEDS="0 2 4" MODE=all bash scripts/run_kaggle_pipeline.sh
+GPU_ID=1 SEEDS="1 3" MODE=all bash scripts/run_kaggle_pipeline.sh
+```
+
+Useful stage-only commands:
+
+```bash
+MODE=prepare bash scripts/run_kaggle_pipeline.sh
+MODE=sweep bash scripts/run_kaggle_pipeline.sh
+MODE=eval bash scripts/run_kaggle_pipeline.sh
+MODE=summarize bash scripts/run_kaggle_pipeline.sh
+zip -r results.zip results data/imagenet_resnet50_selected
 ```
 
 ## References

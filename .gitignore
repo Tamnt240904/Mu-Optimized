@@ -14,3 +14,6 @@ result/
 output/
 result/
 *.JPEG
+data/
+generated_imagenet/
+*.json.tmp
