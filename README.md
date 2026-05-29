@@ -170,6 +170,60 @@ per-image method diagnostics plus insertion/deletion AUCs and curves when
 `--insdel` is enabled. Use `--target-class CLASS_ID` to force one class for
 all images.
 
+## Two-Model Image Selection Workflow
+
+```bash
+# A. Prepare the first 5000 ImageNet validation examples and keep ResNet50-correct images
+python prepare_firstN_correct.py \
+  --first-count 5000 \
+  --output-root data/imagenet_first5000_correct \
+  --device cuda:0
+
+# B. Run insertion/deletion evaluation on all correct images
+python batch_eval.py \
+  --selected-csv data/imagenet_first5000_correct/selected.csv \
+  --model-name resnet50 \
+  --steps 128 \
+  --tau 0.001 \
+  --iters 300 \
+  --insdel \
+  --insdel-steps 50 \
+  --device cuda:0 \
+  --skip-errors \
+  --output-json results/full/full_resnet50.json
+
+python batch_eval.py \
+  --selected-csv data/imagenet_first5000_correct/selected.csv \
+  --model-name vgg16 \
+  --steps 128 \
+  --tau 0.001 \
+  --iters 300 \
+  --insdel \
+  --insdel-steps 50 \
+  --device cuda:0 \
+  --skip-errors \
+  --output-json results/full/full_vgg16.json
+
+# C. Flatten one row per image per method
+python flatten_insdel_json.py \
+  --input-json results/full/full_resnet50.json \
+  --output-csv results/full/full_resnet50_flat.csv
+
+python flatten_insdel_json.py \
+  --input-json results/full/full_vgg16.json \
+  --output-csv results/full/full_vgg16_flat.csv
+
+# D. Select images where Mu beats IG and IDG-PDF on both models
+python select_mu_better_two_models.py \
+  --resnet-csv results/full/full_resnet50_flat.csv \
+  --vgg-csv results/full/full_vgg16_flat.csv \
+  --output-dir results/selection
+```
+
+`prepare_firstN_correct.py` writes `correct_index` as the 0-based position in
+the ResNet50-correct filtered set. The selection JSON files use those
+`correct_index` values, not `rank` or `source_order`.
+
 ## CLI Reference
 
 | Flag | Description | Default |
@@ -200,7 +254,8 @@ all images.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--num-images N` | Maximum images to evaluate | 10 |
+| `--num-images N` | Maximum images to evaluate; omit to evaluate all rows/images | all |
+| `--selected-csv PATH` | CSV of selected images and metadata | off |
 | `--image-dir PATH` | Directory of ImageNet-like image files | sample_imagenet1k |
 | `--output-json PATH` | Batch JSON output path | results/batch_auc_N64_tau001.json |
 | `--steps N` | Interpolation steps | 64 |
@@ -209,6 +264,7 @@ all images.
 | `--lr F` | μ-optimization learning rate | 0.05 |
 | `--insdel` | Pixel insertion/deletion scores | off |
 | `--insdel-steps N` | Pixel ins/del granularity | 50 |
+| `--auc-score {logit,confidence}` | Score used for insertion/deletion AUC only | logit |
 | `--target-class N` | Force target ImageNet class for all images | predicted class |
 | `--seed N` | Random seed for reproducibility | 0 |
 | `--skip-errors` | Record per-image errors and continue | off |

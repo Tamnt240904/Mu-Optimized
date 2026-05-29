@@ -62,7 +62,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run IG, IDG-PDF, and μ-Optimized IG on multiple images."
     )
-    parser.add_argument("--num-images", type=int, default=200)
+    parser.add_argument(
+        "--num-images",
+        type=int,
+        default=None,
+        help="Number of images to evaluate. If omitted, evaluate all selected rows/images.",
+    )
     parser.add_argument("--selected-csv", type=str, default=None)
     parser.add_argument("--image-dir", type=str,
                         default="generated_imagenet/imagenet_resnet50_correct_1000")
@@ -75,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.05)
     parser.add_argument("--insdel", action="store_true")
     parser.add_argument("--insdel-steps", type=int, default=50)
+    parser.add_argument("--auc-score", choices=["logit", "confidence"], default="logit")
     parser.add_argument("--target-class", type=int, default=None)
     parser.add_argument("--target-from-csv", choices=["resnet50_pred"], default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -112,8 +118,8 @@ def load_backbone(model_name: str, device: torch.device):
     return backbone, transform, categories
 
 
-def list_images(image_dir: Path, num_images: int) -> list[dict[str, Any]]:
-    if num_images <= 0:
+def list_images(image_dir: Path, num_images: int | None) -> list[dict[str, Any]]:
+    if num_images is not None and num_images <= 0:
         raise ValueError(f"--num-images must be positive, got {num_images}")
     if not image_dir.is_dir():
         raise FileNotFoundError(f"image directory not found: {image_dir}")
@@ -123,6 +129,7 @@ def list_images(image_dir: Path, num_images: int) -> list[dict[str, Any]]:
     )
     if not images:
         raise FileNotFoundError(f"no image files found in: {image_dir}")
+    selected_images = images if num_images is None else images[:num_images]
     return [
         {
             "rank": index,
@@ -132,32 +139,52 @@ def list_images(image_dir: Path, num_images: int) -> list[dict[str, Any]]:
             "resnet50_selection_score": None,
             "resnet50_predicted_label_idx": None,
         }
-        for index, path in enumerate(images[:num_images], start=1)
+        for index, path in enumerate(selected_images, start=1)
     ]
 
 
-def read_selected_csv(csv_path: Path, num_images: int) -> list[dict[str, Any]]:
+def read_selected_csv(csv_path: Path, num_images: int | None) -> list[dict[str, Any]]:
+    if num_images is not None and num_images <= 0:
+        raise ValueError(f"--num-images must be positive, got {num_images}")
     if not csv_path.is_file():
         raise FileNotFoundError(f"selected CSV not found: {csv_path}")
     with csv_path.open(newline="", encoding="utf-8") as file:
         rows = list(csv.DictReader(file))
-    rows.sort(key=lambda row: int(row.get("rank", 10**9)))
+    rows.sort(key=lambda row: parse_int(row.get("rank")) or 10**9)
+    selected_rows = rows if num_images is None else rows[:num_images]
     selected = []
-    for row in rows[:num_images]:
+    for fallback_rank, row in enumerate(selected_rows, start=1):
         image_path = row.get("copied_image_path") or row.get("image_path")
         if not image_path and row.get("image_name"):
             sibling_dir = csv_path.with_suffix("")
             image_path = str(sibling_dir / row["image_name"])
         if not image_path:
             raise ValueError(f"missing image path in {csv_path}")
-        selected.append({
-            "rank": int(row["rank"]),
+        top1_score = parse_float(row.get("top1_score") or row.get("score"))
+        entry = dict(row)
+        entry.update({
+            "rank": parse_int(row.get("rank")) or fallback_rank,
             "image_path": image_path,
             "copied_image_path": row.get("copied_image_path", image_path),
             "image_name": row.get("image_name") or Path(image_path).name,
-            "resnet50_selection_score": parse_float(row.get("top1_score") or row.get("score")),
-            "resnet50_predicted_label_idx": parse_int(row.get("predicted_label_idx")),
+            "resnet50_selection_score": top1_score,
+            "selection_top1_score": top1_score,
+            "resnet50_predicted_label_idx": parse_int(
+                row.get("predicted_label_idx") or row.get("resnet50_predicted_label_idx")
+            ),
         })
+        for key in (
+            "correct_index",
+            "source_order",
+            "ground_truth_label_idx",
+            "predicted_label_idx",
+        ):
+            if key in row:
+                entry[key] = parse_int(row.get(key))
+        for key in ("top1_score",):
+            if key in row:
+                entry[key] = parse_float(row.get(key))
+        selected.append(entry)
     return selected
 
 
@@ -238,6 +265,28 @@ def csv_target(entry: dict[str, Any]) -> int:
     return int(value)
 
 
+def selection_metadata(entry: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in (
+        "correct_index",
+        "source_order",
+        "ground_truth_label_idx",
+        "ground_truth_label_name",
+        "predicted_label_idx",
+        "predicted_label_name",
+        "top1_score",
+        "selection_top1_score",
+        "wnid",
+    ):
+        if key in entry:
+            metadata[key] = entry.get(key)
+    if "top1_score" not in metadata and entry.get("selection_top1_score") is not None:
+        metadata["top1_score"] = entry.get("selection_top1_score")
+    if "selection_top1_score" not in metadata and entry.get("top1_score") is not None:
+        metadata["selection_top1_score"] = entry.get("top1_score")
+    return metadata
+
+
 def run_one_image(
     entry: dict[str, Any],
     backbone: torch.nn.Module,
@@ -273,10 +322,13 @@ def run_one_image(
         "success": True,
         "methods": {method.name: method_summary(method) for method in methods},
     }
+    image_result.update(selection_metadata(entry))
 
     if args.insdel:
         insertion_deletion = run_insertion_deletion(
-            model, x, baseline, methods, n_steps=args.insdel_steps)
+            model, x, baseline, methods, n_steps=args.insdel_steps,
+            score_mode=args.auc_score, score_model=backbone,
+            score_target_class=target_class)
         _validate_insertion_deletion_export(
             insertion_deletion, methods, args.insdel_steps)
         image_result["insertion_deletion"] = insertion_deletion
@@ -345,6 +397,7 @@ def build_output(args: argparse.Namespace, entries: list[dict[str, Any]],
             "target_class": args.target_class,
             "insdel": args.insdel,
             "insdel_steps": args.insdel_steps,
+            "auc_score": args.auc_score,
             "skip_errors": args.skip_errors,
         },
         "images": images,
@@ -414,6 +467,7 @@ def main() -> int:
                 "image_name": entry.get("image_name"),
                 "rank": entry.get("rank"),
                 "resnet50_selection_score": entry.get("resnet50_selection_score"),
+                **selection_metadata(entry),
                 "success": False,
                 "error": str(exc),
             })

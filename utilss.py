@@ -85,7 +85,15 @@ def compute_insertion_deletion(
     attributions: torch.Tensor,
     n_steps: int = 100,
     batch_size: int = 16,
+    score_mode: str = "logit",
+    score_model: nn.Module | None = None,
+    score_target_class: int | None = None,
 ) -> InsDelScores:
+    if score_mode not in {"logit", "confidence"}:
+        raise ValueError(f"score_mode must be 'logit' or 'confidence', got {score_mode!r}")
+    if score_mode == "confidence" and (score_model is None or score_target_class is None):
+        raise ValueError("confidence insertion/deletion scoring requires a full score_model and target class")
+
     device   = x.device
     _, C, H, W = x.shape
     n_pixels = H * W
@@ -114,20 +122,32 @@ def compute_insertion_deletion(
 
     for start in range(0, S, batch_size):
         end = min(start + batch_size, S)
-        del_logits[start:end] = model(x_del[start:end])
-        ins_logits[start:end] = model(x_ins[start:end])
+        if score_mode == "confidence":
+            del_logits[start:end] = F.softmax(
+                score_model(x_del[start:end]), dim=1
+            )[:, score_target_class]
+            ins_logits[start:end] = F.softmax(
+                score_model(x_ins[start:end]), dim=1
+            )[:, score_target_class]
+        else:
+            del_logits[start:end] = model(x_del[start:end])
+            ins_logits[start:end] = model(x_ins[start:end])
 
-    f_x  = float(model(x))
-    f_bl = float(model(baseline))
+    if score_mode == "confidence":
+        f_x = float(F.softmax(score_model(x), dim=1)[0, score_target_class])
+        f_bl = float(F.softmax(score_model(baseline), dim=1)[0, score_target_class])
+    else:
+        f_x  = float(model(x))
+        f_bl = float(model(baseline))
 
     dx            = 1.0 / n_steps
     insertion_auc = float((ins_logits[:-1] + ins_logits[1:]).sum() * dx / 2)
     deletion_auc  = float((del_logits[:-1] + del_logits[1:]).sum() * dx / 2)
 
-    logit_range = abs(f_x - f_bl)
-    if logit_range > 1e-12:
-        insertion_auc_norm = (insertion_auc - f_bl) / logit_range
-        deletion_auc_norm  = (deletion_auc  - f_bl) / logit_range
+    score_range = abs(f_x - f_bl)
+    if score_range > 1e-12:
+        insertion_auc_norm = (insertion_auc - f_bl) / score_range
+        deletion_auc_norm  = (deletion_auc  - f_bl) / score_range
     else:
         insertion_auc_norm = deletion_auc_norm = 0.0
 
@@ -146,12 +166,16 @@ def run_insertion_deletion(
     baseline: torch.Tensor,
     methods: list[AttributionResult],
     n_steps: int = 100,
+    score_mode: str = "logit",
+    score_model: nn.Module | None = None,
+    score_target_class: int | None = None,
 ) -> dict:
     schedule = [float(i) / n_steps for i in range(n_steps + 1)]
     results = {
         "perturb_steps": n_steps,
         "perturb_schedule": schedule,
         "replacement": "baseline",
+        "auc_score": score_mode,
         "methods": {},
     }
 
@@ -159,7 +183,9 @@ def run_insertion_deletion(
     print("─" * 50)
     for m in methods:
         scores = compute_insertion_deletion(
-            model, x, baseline, m.attributions, n_steps=n_steps)
+            model, x, baseline, m.attributions, n_steps=n_steps,
+            score_mode=score_mode, score_model=score_model,
+            score_target_class=score_target_class)
         m.insdel = scores
         diff = scores.insertion_auc - scores.deletion_auc
         print(f"{m.name:<16} {scores.insertion_auc:>10.4f} "
