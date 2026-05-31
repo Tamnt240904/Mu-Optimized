@@ -17,3 +17,5 @@ result/
 data/
 generated_imagenet/
 *.json.tmp
+logs/
+results/

@@ -68,6 +68,11 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/imagenet_class_index.json"),
     )
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Use Hugging Face datasets streaming mode. Default: load a finite first-N slice.",
+    )
     return parser.parse_args()
 
 
@@ -132,37 +137,56 @@ def collect_first_n_candidates(
     wnid_to_idx: dict[str, int],
     idx_to_meta: dict[int, tuple[str, str]],
     resume: bool,
+    streaming: bool,
 ) -> list[dict[str, Any]]:
     if first_count <= 0:
         raise ValueError(f"--first-count must be positive, got {first_count}")
 
-    dataset = load_dataset(dataset_id, split=split, streaming=True)
     records: list[dict[str, Any]] = []
-    progress = tqdm(total=first_count, desc="Download first-N candidates")
+    dataset: Any | None = None
+    iterator: Any | None = None
+    try:
+        if streaming:
+            dataset = load_dataset(dataset_id, split=split, streaming=True)
+            iterator = iter(dataset)
+        else:
+            dataset = load_dataset(
+                dataset_id,
+                split=f"{split}[:{first_count}]",
+                streaming=False,
+            )
+            iterator = iter(dataset)
 
-    for source_order, row in enumerate(dataset):
-        if len(records) >= first_count:
-            break
+        with tqdm(total=first_count, desc="Download first-N candidates") as progress:
+            for source_order, row in enumerate(iterator):
+                if len(records) >= first_count:
+                    break
 
-        label_idx, wnid = label_to_imagenet_index(
-            dataset, row["label"], wnid_to_idx, idx_to_meta
-        )
-        image_name = f"candidate_{source_order:05d}_{wnid}_c{label_idx:04d}.JPEG"
-        image_path = candidate_dir / image_name
-        if not resume or not image_path.exists():
-            save_rgb_jpeg(row["image"], image_path)
+                label_idx, wnid = label_to_imagenet_index(
+                    dataset, row["label"], wnid_to_idx, idx_to_meta
+                )
+                image_name = f"candidate_{source_order:05d}_{wnid}_c{label_idx:04d}.JPEG"
+                image_path = candidate_dir / image_name
+                if not resume or not image_path.exists():
+                    save_rgb_jpeg(row["image"], image_path)
 
-        records.append({
-            "source_order": source_order,
-            "candidate_image_path": image_path,
-            "image_name": image_name,
-            "ground_truth_label_idx": label_idx,
-            "ground_truth_label_name": idx_to_meta[label_idx][1],
-            "wnid": wnid,
-        })
-        progress.update(1)
+                records.append({
+                    "source_order": source_order,
+                    "candidate_image_path": image_path,
+                    "image_name": image_name,
+                    "ground_truth_label_idx": label_idx,
+                    "ground_truth_label_name": idx_to_meta[label_idx][1],
+                    "wnid": wnid,
+                })
+                progress.update(1)
+    finally:
+        if iterator is not None:
+            del iterator
+        if dataset is not None:
+            del dataset
+        import gc
+        gc.collect()
 
-    progress.close()
     if len(records) != first_count:
         raise RuntimeError(
             f"Dataset ended after {len(records)} candidates; expected {first_count}."
@@ -263,7 +287,7 @@ def main() -> int:
 
     records = collect_first_n_candidates(
         args.dataset_id, args.split, args.first_count, candidate_dir,
-        wnid_to_idx, idx_to_meta, args.resume)
+        wnid_to_idx, idx_to_meta, args.resume, args.streaming)
     correct = filter_correct_resnet50(records, args.batch_size, device)
     csv_path = export_selected(correct, output_root)
 
