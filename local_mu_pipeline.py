@@ -26,6 +26,8 @@ import zipfile
 from pathlib import Path
 from typing import Iterable
 
+from progressive_filter import PROGRESSIVE_FILTER_RULES, build_progressive_filtered_csv
+
 
 DEFAULT_MODELS = ["resnet50", "vgg16"]
 
@@ -57,6 +59,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.05)
     parser.add_argument("--insdel-steps", type=int, default=50)
     parser.add_argument("--auc-score", choices=["logit", "confidence"], default="confidence")
+    parser.add_argument("--progressive-filter", action="store_true", help="Evaluate later models only on rows that pass previous model filters.")
+    parser.add_argument(
+        "--progressive-filter-rule",
+        choices=PROGRESSIVE_FILTER_RULES,
+        default="mu_gt_idg_insdel",
+        help="Rule used to keep rows between models.",
+    )
 
     parser.add_argument(
         "--num-eval-images",
@@ -183,6 +192,13 @@ def count_selected_rows(selected_csv: Path) -> int:
         return max(sum(1 for _ in f) - 1, 0)
 
 
+def run_label(args: argparse.Namespace) -> str:
+    label = f"first{args.first_count}_correct_N{args.steps}_tau{args.tau}_{args.auc_score}"
+    if args.progressive_filter:
+        label += f"_progressive-{args.progressive_filter_rule}"
+    return label
+
+
 def zip_paths(archive_path: Path, paths: Iterable[Path]) -> None:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -221,6 +237,8 @@ def main() -> None:
     print("Results:", results_dir)
     print("Logs:", logs_dir)
     print("Full root:", full_root)
+    if args.progressive_filter:
+        print("Progressive filter:", args.progressive_filter_rule)
 
     # 1. Optional smoke test.
     if args.run_small_test:
@@ -330,17 +348,21 @@ def main() -> None:
 
     # 3. Full eval.
     full_json_paths: dict[str, Path] = {}
+    completed_models: list[str] = []
+    label = run_label(args)
     if not args.skip_eval:
         (results_dir / "full").mkdir(parents=True, exist_ok=True)
+        current_selected_csv = selected_csv
+        model_chain: list[str] = []
         for model in args.models:
-            out = results_dir / "full" / f"full_{model}_first{args.first_count}_correct_N{args.steps}_tau{args.tau}_{args.auc_score}.json"
-            log = logs_dir / f"full_{model}_first{args.first_count}_correct_N{args.steps}_tau{args.tau}_{args.auc_score}.log"
+            out = results_dir / "full" / f"full_{model}_{label}.json"
+            log = logs_dir / f"full_{model}_{label}.log"
             cmd = [
                 sys.executable,
                 "-u",
                 "batch_eval.py",
                 "--selected-csv",
-                str(selected_csv),
+                str(current_selected_csv),
                 "--model-name",
                 model,
                 "--steps",
@@ -373,18 +395,51 @@ def main() -> None:
                 dry_run=args.dry_run,
             )
             full_json_paths[model] = out
+            completed_models.append(model)
+
+            if args.progressive_filter:
+                model_chain.append(model)
+                filtered_csv = full_root / (
+                    f"selected_after_{'_'.join(model_chain)}_{args.progressive_filter_rule}.csv"
+                )
+                if args.dry_run and not out.exists():
+                    print(
+                        "DRY RUN: would build progressive filtered CSV "
+                        f"{filtered_csv} from {out}"
+                    )
+                    current_selected_csv = filtered_csv
+                    continue
+                kept = build_progressive_filtered_csv(
+                    original_selected_csv=current_selected_csv,
+                    batch_json=out,
+                    output_csv=filtered_csv,
+                    rule=args.progressive_filter_rule,
+                )
+                print(
+                    f"Progressive filter after {model}: kept {kept} rows -> {filtered_csv}"
+                )
+                current_selected_csv = filtered_csv
+                if kept == 0:
+                    remaining = [name for name in args.models if name not in completed_models]
+                    print(
+                        "WARNING: progressive filter left zero images; "
+                        f"skipping remaining models: {', '.join(remaining) or 'none'}"
+                    )
+                    break
     else:
         print("skip_eval=True; using existing full JSON files.")
         for model in args.models:
-            full_json_paths[model] = results_dir / "full" / f"full_{model}_first{args.first_count}_correct_N{args.steps}_tau{args.tau}_{args.auc_score}.json"
+            path = results_dir / "full" / f"full_{model}_{label}.json"
+            full_json_paths[model] = path
+            completed_models.append(model)
 
     # 4. Flatten.
     flat_paths: dict[str, Path] = {}
     if not args.skip_flatten:
         (results_dir / "full").mkdir(parents=True, exist_ok=True)
-        for model in args.models:
+        for model in completed_models:
             in_json = full_json_paths[model]
-            out_csv = results_dir / "full" / f"full_{model}_first{args.first_count}_correct_N{args.steps}_tau{args.tau}_{args.auc_score}_flat.csv"
+            out_csv = results_dir / "full" / f"full_{model}_{label}_flat.csv"
             cmd = [
                 sys.executable,
                 "-u",
@@ -405,15 +460,15 @@ def main() -> None:
             flat_paths[model] = out_csv
     else:
         print("skip_flatten=True; using existing flat CSV files.")
-        for model in args.models:
-            flat_paths[model] = results_dir / "full" / f"full_{model}_first{args.first_count}_correct_N{args.steps}_tau{args.tau}_{args.auc_score}_flat.csv"
+        for model in completed_models:
+            flat_paths[model] = results_dir / "full" / f"full_{model}_{label}_flat.csv"
 
     # 5. Selection requires resnet50 and vgg16.
     if not args.skip_selection:
         if "resnet50" not in flat_paths or "vgg16" not in flat_paths:
             print("Skipping selection: requires both resnet50 and vgg16 flat CSVs.")
         else:
-            selection_dir = results_dir / "selection" / f"first{args.first_count}_N{args.steps}_tau{args.tau}_{args.auc_score}"
+            selection_dir = results_dir / "selection" / label
             cmd = [
                 sys.executable,
                 "-u",
@@ -440,7 +495,7 @@ def main() -> None:
     # 6. Archive.
     if args.archive:
         args.archive_dir.mkdir(parents=True, exist_ok=True)
-        archive = args.archive_dir / f"mu_pipeline_results_first{args.first_count}_N{args.steps}_tau{args.tau}_{args.auc_score}.zip"
+        archive = args.archive_dir / f"mu_pipeline_results_{label}.zip"
         zip_paths(archive, [results_dir, logs_dir, selected_csv])
 
     print("Pipeline finished.")

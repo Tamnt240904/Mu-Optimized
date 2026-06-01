@@ -224,6 +224,41 @@ python select_mu_better_two_models.py \
 the ResNet50-correct filtered set. The selection JSON files use those
 `correct_index` values, not `rank` or `source_order`.
 
+### Progressive Model Filtering
+
+Normally, every model evaluates the same `selected.csv`.
+
+With `--progressive-filter`, the first model evaluates the full `selected.csv`.
+Each later model evaluates only images that passed the previous model filter.
+By default, a row survives when `Mu insdel > IDG-PDF insdel`; the stricter
+`mu_gt_ig_idg_insdel` rule also requires `Mu insdel > IG insdel`. This can save
+time when the final goal is to find images where μ-Optimized consistently beats
+IDG-PDF across multiple models.
+
+Filtered CSVs preserve the original columns, order, and `correct_index` values:
+
+```bash
+data/imagenet_first5000_correct/selected_after_resnet50_mu_gt_idg_insdel.csv
+data/imagenet_first5000_correct/selected_after_resnet50_vgg16_mu_gt_idg_insdel.csv
+```
+
+Example:
+
+```bash
+python local_mu_pipeline.py \
+  --first-count 5000 \
+  --steps 64 \
+  --iters 300 \
+  --insdel-steps 50 \
+  --tau 0.01 \
+  --auc-score confidence \
+  --device cuda:0 \
+  --models resnet50 vgg16 \
+  --progressive-filter \
+  --progressive-filter-rule mu_gt_idg_insdel \
+  --archive
+```
+
 ## CLI Reference
 
 | Flag | Description | Default |
