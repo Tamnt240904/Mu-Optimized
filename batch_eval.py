@@ -53,8 +53,8 @@ AGGREGATE_KEYS = [
 ]
 MODEL_LOADERS = {
     "resnet50": (models.resnet50, models.ResNet50_Weights.DEFAULT),
-    "resnet101": {models.resnet101, models.ResNet50_Weights.DEFAULT},
-    "vgg19": {models.vgg19, models.VGG16_Weights.DEFAULT},
+    "resnet101": {models.resnet101, models.ResNet101_Weights.DEFAULT},
+    "vgg19": {models.vgg19, models.VGG19_Weights.DEFAULT},
     "vgg16": (models.vgg16, models.VGG16_Weights.DEFAULT),
     "densenet121": (models.densenet121, models.DenseNet121_Weights.DEFAULT),
 }
