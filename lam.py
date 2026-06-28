@@ -2,7 +2,7 @@
 lam.py — Integrated Gradients attribution methods and experiment utilities
 =========================================================================
 
-The active attribution surface contains exactly three straight-line methods.
+The active attribution surface contains exactly two straight-line methods.
 All use γ_k = baseline + (k/N)(x - baseline), gradients at k = 0,...,N-1,
 and Δf_k = f(γ_{k+1}) - f(γ_k).
 
@@ -10,7 +10,6 @@ Derived quantities reported alongside include Var_ν(φ), CV²(φ), and Q.
 
 Methods implemented:
     IG           — straight line, uniform μ
-    IDG-PDF      — straight line, μ_k ∝ |Δf_k|
     μ-Optimised  — straight line, μ optimized for -Q + L2
 
 Usage:
@@ -116,6 +115,35 @@ def _forward_and_gradient_batch(model: nn.Module, x_batch: torch.Tensor
     return f_vals, x_in.grad.detach()
 
 
+def _forward_and_gradient_batch_chunked(
+    model: nn.Module,
+    x_batch: torch.Tensor,
+    chunk_size: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Evaluate path gradients in micro-batches to limit peak GPU memory."""
+    if chunk_size is None:
+        chunk_size = int(os.environ.get("MU_GRAD_CHUNK", "4"))
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    f_chunks = []
+    grad_chunks = []
+    for start in range(0, x_batch.shape[0], chunk_size):
+        end = min(start + chunk_size, x_batch.shape[0])
+        x_chunk = x_batch[start:end].detach().clone().requires_grad_(True)
+        f_chunk, grad_chunk = _forward_and_gradient_batch(model, x_chunk)
+        f_chunks.append(f_chunk.detach().cpu())
+        grad_chunks.append(grad_chunk.detach().cpu())
+        del x_chunk, f_chunk, grad_chunk
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    return (
+        torch.cat(f_chunks, dim=0).to(x_batch.device),
+        torch.cat(grad_chunks, dim=0).to(x_batch.device),
+    )
+
+
 def _gradient(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     """∇f(x) only (when f value already known)."""
     with torch.enable_grad():
@@ -182,7 +210,7 @@ def _pack_result(name, attr, d_list, df_list, f_vals, gnorms, mu, N,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §4  STRAIGHT-LINE PASS  (shared by IG, IDG-PDF, μ-Optimised)
+# §4  STRAIGHT-LINE PASS  (shared by IG and μ-Optimised)
 #
 #     FIX 1: batch all N interpolation points into ONE forward + ONE backward.
 #     Old cost:  N sequential forward+backward = 2N model calls
@@ -218,20 +246,14 @@ def _straight_line_pass(model: nn.Module, x: torch.Tensor,
     alphas = torch.arange(N, device=x.device, dtype=x.dtype).view(N, 1, 1, 1) / N
     gamma_batch = baseline + alphas * delta_x       # (N, C, H, W)
 
-    # ── Batched forward + backward ──
-    if fwd_batch_size <= 0 or fwd_batch_size >= N:
-        # Single shot
-        f_batch, grad_batch = _forward_and_gradient_batch(model, gamma_batch)
-    else:
-        # Chunked to limit VRAM
-        f_chunks, g_chunks = [], []
-        for i0 in range(0, N, fwd_batch_size):
-            i1 = min(i0 + fwd_batch_size, N)
-            fb, gb = _forward_and_gradient_batch(model, gamma_batch[i0:i1])
-            f_chunks.append(fb)
-            g_chunks.append(gb)
-        f_batch = torch.cat(f_chunks, dim=0)        # (N,)
-        grad_batch = torch.cat(g_chunks, dim=0)      # (N, C, H, W)
+    # ── Micro-batched forward + backward ──
+    chunk_size = (
+        fwd_batch_size
+        if fwd_batch_size > 0
+        else int(os.environ.get("MU_GRAD_CHUNK", "4"))
+    )
+    f_batch, grad_batch = _forward_and_gradient_batch_chunked(
+        model, gamma_batch, chunk_size=chunk_size)
 
     # f_vals layout: [f(γ_0), f(γ_1), ..., f(γ_N)]
     # Gradients are evaluated at γ_k for k = 0,...,N-1 and
@@ -239,14 +261,14 @@ def _straight_line_pass(model: nn.Module, x: torch.Tensor,
     f_vals = f_batch.tolist() + [f_x]
 
     # d_k = ∇f(γ_k) · ((x - baseline) / N)
-    d_tensor = (grad_batch * step).view(N, -1).sum(dim=1)   # (N,)
+    d_tensor = (grad_batch * step).reshape(N, -1).sum(dim=1)   # (N,)
     d_list = d_tensor.tolist()
 
     # Δf_k = f_vals[k+1] - f_vals[k]
     df_list = [f_vals[k + 1] - f_vals[k] for k in range(N)]
 
     # grad norms
-    gnorms = grad_batch.view(N, -1).norm(dim=1).tolist()     # N floats
+    gnorms = grad_batch.reshape(N, -1).norm(dim=1).tolist()     # N floats
 
     # grads as list of (1, C, H, W) — clone to avoid shared-memory bugs
     grads = [grad_batch[k:k+1].clone() for k in range(N)]
@@ -274,31 +296,7 @@ def standard_ig(model: nn.Module, x: torch.Tensor, baseline: torch.Tensor,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §6  IDG-PDF
-# ═════════════════════════════════════════════════════════════════════════════
-
-def idg_pdf(model: nn.Module, x: torch.Tensor, baseline: torch.Tensor,
-         N: int = 50) -> AttributionResult:
-    """IDG-PDF: output-change weighted IG with μ_k ∝ |Δf_k|."""
-    t0 = time.time()
-    delta_x, target, grads, d_list, df_list, f_vals, gnorms = \
-        _straight_line_pass(model, x, baseline, N)
-
-    df_arr = torch.tensor(df_list, device=x.device)
-    weights = df_arr.abs()
-    w_sum = weights.sum()
-    mu = weights / w_sum if w_sum > 1e-12 else torch.full((N,), 1.0/N, device=x.device)
-
-    # Weighted gradient sum — grads[k] is (1, C, H, W)
-    grad_stack = torch.cat(grads, dim=0)               # (N, C, H, W)
-    mu_4d = mu.view(N, 1, 1, 1)                         # (N, 1, 1, 1)
-    wg = (mu_4d * grad_stack).sum(dim=0, keepdim=True)  # (1, C, H, W)
-    attr = completeness_rescale(delta_x * wg, target)
-
-    return _pack_result("IDG-PDF", attr, d_list, df_list, f_vals, gnorms, mu, N, t0)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# §7  μ-OPTIMISATION
+# §6  μ-OPTIMISATION
 # ═════════════════════════════════════════════════════════════════════════════
 
 def optimize_mu(d: torch.Tensor, delta_f: torch.Tensor,
@@ -382,7 +380,7 @@ def project_simplex(v: torch.Tensor) -> torch.Tensor:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §8  μ-OPTIMISED IG
+# §7  μ-OPTIMISED IG
 # ═════════════════════════════════════════════════════════════════════════════
 
 def mu_optimized_ig(model: nn.Module, x: torch.Tensor,
@@ -421,7 +419,7 @@ def mu_optimized_ig(model: nn.Module, x: torch.Tensor,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §9  IMAGE LOADING
+# §8  IMAGE LOADING
 # ═════════════════════════════════════════════════════════════════════════════
 
 def load_image_and_model(device: torch.device, min_conf: float = 0.70, skip=0):
@@ -528,7 +526,7 @@ def load_image_and_model(device: torch.device, min_conf: float = 0.70, skip=0):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §10  HEATMAP VISUALISATION
+# §9  HEATMAP VISUALISATION
 # ═════════════════════════════════════════════════════════════════════════════
 
 def visualize_attributions(x, methods, info, save_path="attribution_heatmaps.png",
@@ -547,8 +545,7 @@ def visualize_attributions(x, methods, info, save_path="attribution_heatmaps.png
     cmap = LinearSegmentedColormap.from_list("heat", [
         (0,(0,0,0,0)), (0.3,(0.97,0.45,0.02,0.4)),
         (0.6,(0.97,0.71,0.22,0.7)), (1,(1,1,1,1))])
-    colors = {"IG":"#6B7280","IDG-PDF":"#8B5CF6",
-              "μ-Optimized":"#F59E0B"}
+    colors = {"IG":"#6B7280", "μ-Optimized":"#F59E0B"}
 
     n = len(methods)
     fig, axes = plt.subplots(2, n+1, figsize=(3.6*(n+1), 7.5), facecolor="#0D0D0D")
@@ -614,13 +611,12 @@ def visualize_attributions(x, methods, info, save_path="attribution_heatmaps.png
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §11  EXPERIMENT RUNNER
+# §10  EXPERIMENT RUNNER
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _run_methods(model, x, baseline, N, tau, mu_iter, lr):
     return [
         standard_ig(model, x, baseline, N),
-        idg_pdf(model, x, baseline, N),
         mu_optimized_ig(
             model, x, baseline, N, tau=tau, n_iter=mu_iter, lr=lr),
     ]
@@ -669,12 +665,12 @@ def run_experiment(N=50, device=None, min_conf=0.70, tau=0.005,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §12  MAIN
+# §11  MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="μ-Optimized IG: IG, IDG-PDF, and μ-Optimized")
+        description="μ-Optimized IG: compare IG and μ-Optimized")
     parser.add_argument("--json", type=str, default=None)
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--tau", type=float, default=0.005)

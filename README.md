@@ -3,8 +3,8 @@
 **Optimizing Weights for Discretized Integrated Gradients**
 
 A direct optimization framework for finding quadrature weights in discrete
-Integrated Gradients. The repository implements three straight-line
-attribution methods: standard IG, IDG-PDF, and μ-Optimized IG.
+Integrated Gradients. The repository compares two straight-line attribution
+methods: standard IG and μ-Optimized IG.
 
 **Key Result:** after path gradients and model outputs have been computed, the
 μ-optimization loop requires no additional model evaluations.
@@ -54,16 +54,16 @@ Up to numerical tolerance, `Q` is finite and lies in `[0, 1]`.
 | Method | Weights μ | Description |
 |--------|-----------|-------------|
 | Standard IG | `1/N` | Uniform quadrature weights |
-| IDG-PDF | `μ_k ∝ \|Δf_k\|` | Closed-form output-change weighting |
 | **μ-Optimized IG** | Optimized by PGD | Minimizes `-Q(μ) + (τ/2)‖μ‖²₂` |
 
 ## Files
 
 ```text
 batch_eval.py    Batch image evaluation and JSON aggregation
-u_optimize.py    μ-optimization and the three attribution methods
+u_optimize.py    μ-optimization and the two attribution methods
 lam.py           Base IG implementations and model utilities
 utilss.py        Metrics, insertion/deletion, and visualization utilities
+mu-optimize.ipynb Kaggle experiment and result-table notebook
 requirements.txt Python dependencies
 ```
 
@@ -96,7 +96,7 @@ installs its required CUDA build.
 
 Place one or more `.jpg`, `.jpeg`, or `.png` files in
 `sample_imagenet1k/`. The script selects a sufficiently confident image and
-compares all three methods.
+compares both methods.
 
 ```bash
 mkdir -p sample_imagenet1k
@@ -221,14 +221,15 @@ if a long batch run is interrupted.
 
 ## Running with the Kaggle Notebook
 
-The notebook `/home/tam/Music/mu-optimize.ipynb` performs the following steps:
+The repository notebook `mu-optimize.ipynb` performs the following steps:
 
 1. Clones this repository into `/kaggle/working/Mu-Optimized`.
 2. Installs `requirements.txt` and a CUDA-compatible PyTorch build.
-3. Applies the notebook's memory-management patch to `lam.py` and
-   `batch_eval.py`.
+3. Configures `MU_GRAD_CHUNK` for the memory-efficient implementation already
+   included in `lam.py`.
 4. Runs `batch_eval.py` for the configured models and external image dataset.
-5. Builds CSV comparison tables from the generated JSON results.
+5. Builds IG versus μ-Optimized CSV comparison tables from the generated JSON
+   results.
 
 Before running it on Kaggle, update `IMAGE_DIR` in the notebook so it points to
 the attached Kaggle image dataset. Then use **Run all**; no additional repo
@@ -268,7 +269,7 @@ L2 mass.
 - Pretrained torchvision weights may consume several hundred megabytes.
 - Larger `--steps` values usually improve path resolution but use more GPU
   memory and computation time.
-- Reduce `--steps`, `--insdel-steps`, or the notebook's `MU_GRAD_CHUNK` value if
+- Reduce `--steps`, `--insdel-steps`, or `MU_GRAD_CHUNK` if
   CUDA runs out of memory.
 - Use `--skip-errors` for long batch jobs so one corrupt image does not stop the
   entire evaluation.

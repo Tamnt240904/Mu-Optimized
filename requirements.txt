@@ -1,6 +1,9 @@
 torch
 torchvision
 datasets
+numpy
+pandas
+scipy
 pillow
 tqdm
 matplotlib

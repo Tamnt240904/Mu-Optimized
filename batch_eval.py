@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import json
 import math
 from collections import defaultdict
@@ -23,7 +24,7 @@ from utilss import get_device, run_insertion_deletion, set_seed
 
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".bmp", ".webp"}
-METHOD_NAMES = ["IG", "IDG-PDF", "μ-Optimized"]
+METHOD_NAMES = ["IG", "μ-Optimized"]
 METHOD_SUMMARY_KEYS = [
     "Q",
     "CV2",
@@ -52,17 +53,32 @@ AGGREGATE_KEYS = [
     "insdel",
 ]
 MODEL_LOADERS = {
-    "resnet50": (models.resnet50, models.ResNet50_Weights.DEFAULT),
-    "resnet101": {models.resnet101, models.ResNet101_Weights.DEFAULT},
-    "vgg19": {models.vgg19, models.VGG19_Weights.DEFAULT},
-    "vgg16": (models.vgg16, models.VGG16_Weights.DEFAULT),
     "densenet121": (models.densenet121, models.DenseNet121_Weights.DEFAULT),
+    "resnet50": (models.resnet50, models.ResNet50_Weights.DEFAULT),
+    "resnet101": (models.resnet101, models.ResNet101_Weights.DEFAULT),
+    "vgg16": (models.vgg16, models.VGG16_Weights.DEFAULT),
+    "vgg19": (models.vgg19, models.VGG19_Weights.DEFAULT),
+    "mobilenet_v2": (models.mobilenet_v2, models.MobileNet_V2_Weights.DEFAULT),
 }
+
+
+def cleanup_cuda() -> None:
+    """Release per-image CPU/GPU allocations before the next batch item."""
+    gc.collect()
+    if not torch.cuda.is_available():
+        return
+    try:
+        torch.cuda.synchronize()
+    except Exception:
+        pass
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+    gc.collect()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run IG, IDG-PDF, and μ-Optimized IG on multiple images."
+        description="Run IG and μ-Optimized IG on multiple images."
     )
     parser.add_argument(
         "--num-images",
@@ -473,6 +489,7 @@ def main() -> int:
                 "success": False,
                 "error": str(exc),
             })
+        cleanup_cuda()
         write_output(output_path, build_output(args, entries, images))
 
     output = build_output(args, entries, images)

@@ -367,7 +367,6 @@ def visualize_insertion_deletion(
 
     method_colors = {
         "IG":          "#6B7280",
-        "IDG-PDF":     "#8B5CF6",
         "μ-Optimized": "#F59E0B",
     }
 
@@ -505,7 +504,7 @@ def visualize_step_fidelity(
 
     BG, FG, GRID_C = "#0D0D0D", "#E8E4DF", "#1E1E1E"
     method_colors  = {
-        "IG": "#6B7280", "IDG-PDF": "#8B5CF6",
+        "IG": "#6B7280",
         "μ-Optimized": "#F59E0B",
     }
 

@@ -6,10 +6,9 @@ Implements μ-optimization for discretized Integrated Gradients:
 
     min_{μ∈simplex}  -Q(μ) +  (τ/2) ‖μ‖²₂
 
-Compares three methods:
+Compares two methods:
     1. Standard IG      — uniform μ, straight line
-    2. IDG-PDF          — μ_k ∝ |Δf_k|, straight line
-    3. μ-Optimized      — optimized μ via projected gradient descent
+    2. μ-Optimized      — optimized μ via projected gradient descent
 
 Usage:
     from u_optimize import mu_optimized_ig, run_all_methods, run_experiment
@@ -68,19 +67,6 @@ def compute_mu_objective(
     l2 = float((mu ** 2).sum())
     total = -q + (tau / 2.0) * l2
     return total, q, l2
-
-
-def output_change_weights(
-    d: torch.Tensor,
-    delta_f: torch.Tensor,
-) -> torch.Tensor:
-    """Closed-form IDG-PDF heuristic μ_k ∝ |Δf_k|."""
-    del d
-    weights = delta_f.abs()
-    w_sum = weights.sum()
-    if w_sum < 1e-12:
-        return torch.full_like(weights, 1.0 / len(weights))
-    return weights / w_sum
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -155,7 +141,7 @@ def mu_optimized_ig(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# §3  RUN ALL METHODS (IG, IDG-PDF, μ-Optimized)
+# §3  RUN ALL METHODS (IG, μ-Optimized)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def run_all_methods(
@@ -168,21 +154,18 @@ def run_all_methods(
     lr: float = 0.05,
 ) -> list[AttributionResult]:
     """
-    Run three IG variants: IG, IDG-PDF, and μ-Optimized.
+    Run the IG baseline and μ-Optimized IG.
 
-    Returns list: [IG, IDG-PDF, μ-Optimized]
+    Returns list: [IG, μ-Optimized]
     """
-    from lam import standard_ig, idg_pdf
+    from lam import standard_ig
 
     results = []
 
     # 1. Standard IG  (uniform μ, straight line)
     results.append(standard_ig(model, x, baseline, N))
 
-    # 2. IDG-PDF  (μ_k ∝ |Δf_k|, straight line)
-    results.append(idg_pdf(model, x, baseline, N))
-
-    # 3. μ-Optimized  (straight line, optimized μ)
+    # 2. μ-Optimized  (straight line, optimized μ)
     results.append(mu_optimized_ig(
         model, x, baseline, N, tau=tau, n_iter=mu_iter, lr=lr))
 
@@ -195,7 +178,7 @@ def run_all_methods(
 
 def run_experiment(N=50, device=None, min_conf=0.70, tau=0.01,
                    mu_iter=300, lr=0.05, skip=0):
-    """Run experiment: load model/image, run 3 methods and print table."""
+    """Run experiment: load model/image, run both methods and print a table."""
     from lam import load_image_and_model
     from utilss import get_device
 
@@ -328,7 +311,7 @@ if __name__ == "__main__":
     import json
     from utilss import set_seed
     parser = argparse.ArgumentParser(
-        description="μ-Optimized IG — compare IG, IDG-PDF, and μ-Optimized")
+        description="μ-Optimized IG — compare IG and μ-Optimized")
     parser.add_argument("--json", type=str, default=None,
                         help="Export results to JSON file")
     parser.add_argument("--steps", type=int, default=50,
